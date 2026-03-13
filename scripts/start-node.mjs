@@ -1,6 +1,8 @@
 import { startRuntimeNode } from '../src/runtime/node/runtimeNode.mjs';
 import { startRuntimeNodeFormal } from '../src/runtime/node/runtimeNodeFormal.mjs';
 import { createHttpTransport } from '../src/runtime/transport/httpTransport.mjs';
+import { createFetchHttpClient } from '../src/runtime/bootstrap/bootstrapClient.mjs';
+import { runNodeAutoJoin } from '../src/runtime/bootstrap/nodeAutoJoin.mjs';
 
 function envBool(name, def = false) {
   const v = process.env[name];
@@ -58,6 +60,29 @@ const runtimeOptions = {
 // - try primary first
 // - only try fallback if fallback DNS resolves
 await announceBootstrapPlan({ primary: BOOTSTRAP_PRIMARY, fallback: BOOTSTRAP_FALLBACK });
+
+// Optional node auto-join flow (explicit bootstrap join; NOT discovery).
+if (envBool('ENABLE_AUTO_JOIN', false)) {
+  const selfNodeUrl = process.env.SELF_NODE_URL;
+  if (!selfNodeUrl) {
+    console.log('Auto-join disabled: SELF_NODE_URL not set');
+  } else {
+    const maxPeers = Number(process.env.MAX_BOOTSTRAP_PEERS || 3);
+    try {
+      const httpClient = createFetchHttpClient({ timeoutMs: 5000 });
+      const res = await runNodeAutoJoin({
+        selfNodeUrl,
+        bootstrapPrimary: BOOTSTRAP_PRIMARY,
+        bootstrapFallback: BOOTSTRAP_FALLBACK,
+        maxPeers,
+        httpClient
+      });
+      console.log(`Auto-join result: ${JSON.stringify(res)}`);
+    } catch (e) {
+      console.log(`Auto-join failed (fail closed): ${String(e.message || e)}`);
+    }
+  }
+}
 
 const identity = {
   node_name: process.env.NODE_NAME || 'a2a-node'

@@ -15,4 +15,8 @@ Important notes (current frozen phases):
 - No distributed runtime
 - No dynamic routing
 
+Auto-join (runtime-adjacent, additive):
+- Nodes may optionally POST themselves to `/join`, fetch `/peers`, and select up to N peers deterministically.
+- This is explicit bootstrap join only; it is NOT a discovery network.
+
 Bootstrap endpoints are placeholders for explicit, trusted entry points.

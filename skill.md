@@ -51,6 +51,11 @@ Environment variables (see `.env.example`):
 - `ALLOW_TEST_STUB_OUTBOUND` (default: false)
 - `FORMAL_OUTBOUND_URL` (required only if enabling formal outbound send)
 
+Auto-join (explicit bootstrap join; NOT discovery):
+- `ENABLE_AUTO_JOIN` (default: false)
+- `MAX_BOOTSTRAP_PEERS` (default: 3; range 1..3)
+- `SELF_NODE_URL` (required if enabling auto-join)
+
 ## Bootstrap connection
 
 Bootstrap endpoints are explicit trusted entry points (placeholders for future expansion):
