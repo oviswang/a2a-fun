@@ -41,14 +41,28 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect } 
 
     connected = true;
 
-    ws.addEventListener('message', (ev) => {
-      const msg = safeJsonParse(String(ev.data));
-      if (!msg || typeof msg !== 'object') return;
+    let didRegister = false;
+    const registeredPromise = new Promise((resolve) => {
+      ws.addEventListener(
+        'message',
+        (ev) => {
+          const msg = safeJsonParse(String(ev.data));
+          if (!msg || typeof msg !== 'object') return;
 
-      // Forwarded messages are opaque: { from, payload }
-      if (typeof msg.from === 'string' && 'payload' in msg) {
-        onForward({ from: msg.from, payload: msg.payload });
-      }
+          // Registration ack.
+          if (msg.ok === true && msg.type === 'registered' && msg.node === nodeId) {
+            didRegister = true;
+            resolve(true);
+            return;
+          }
+
+          // Forwarded messages are opaque: { from, payload }
+          if (typeof msg.from === 'string' && 'payload' in msg) {
+            onForward({ from: msg.from, payload: msg.payload });
+          }
+        },
+        { once: false }
+      );
     });
 
     ws.addEventListener(
@@ -62,6 +76,44 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect } 
 
     // Register.
     ws.send(JSON.stringify({ type: 'register', node: nodeId }));
+
+    // Fail closed if registration never completes quickly.
+    const timer = setTimeout(() => {
+      // handled by the race promise below
+    }, 1);
+    clearTimeout(timer);
+
+    let timeoutId;
+    try {
+      await Promise.race([
+        registeredPromise,
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            if (didRegister) return;
+            const e = new Error('relayClient.connect: register timeout');
+            e.code = 'REGISTER_TIMEOUT';
+            reject(e);
+          }, 1000);
+        })
+      ]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  async function relay({ to, payload }) {
+    if (!to || typeof to !== 'string') {
+      const e = new Error('relayClient.relay: to must be string');
+      e.code = 'INVALID_TO';
+      throw e;
+    }
+    await connect();
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      const e = new Error('relayClient.relay: not connected');
+      e.code = 'NOT_CONNECTED';
+      throw e;
+    }
+    ws.send(JSON.stringify({ type: 'relay', to, payload }));
   }
 
   async function close() {
@@ -82,5 +134,5 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect } 
     return connected && ws && ws.readyState === WebSocket.OPEN;
   }
 
-  return { connect, close, isConnected };
+  return { connect, relay, close, isConnected };
 }
