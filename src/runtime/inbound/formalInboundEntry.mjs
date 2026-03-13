@@ -16,6 +16,7 @@
  */
 
 import { validateEnvelope } from '../../phase2/envelope/envelope.schema.mjs';
+import { applySessionProbeMessage } from '../../phase3/session/sessionStateTransition.mjs';
 
 function fail({ code, validated = null, session_id = null, session_found = null, processed = null } = {}) {
   return {
@@ -97,6 +98,43 @@ export async function formalInboundEntry(payload, { storage, protocolProcessor }
       session_apply_result_state: r?.session_apply_result?.next_state?.state ?? null,
       audit_records_count: Array.isArray(r?.audit_records) ? r.audit_records.length : null
     };
+
+    // -----------------------------
+    // Phase 3 (Session / Probe Runtime) — minimal wiring hook
+    // -----------------------------
+    // Hard rule: do not broaden protocol scope here. This hook is opt-in: it only activates
+    // when the processor returns an explicit phase3_session_probe_message.
+    //
+    // We do NOT modify Phase 2 envelope semantics, transport semantics, or processor wiring.
+    // This layer only applies the already-defined minimal session/probe transition baseline.
+    const phase3Msg = r?.phase3_session_probe_message ?? null;
+    if (phase3Msg) {
+      const basePhase3State =
+        r?.phase3_session_state ??
+        {
+          session_id,
+          peer_actor_id: null,
+          state: 'NEW',
+          local_entered: false,
+          remote_entered: false
+        };
+
+      let next;
+      try {
+        next = applySessionProbeMessage({ state: basePhase3State, message: phase3Msg });
+      } catch (e) {
+        // Fail closed: do not proceed with any further runtime behavior.
+        return fail({ code: e?.code || 'PHASE3_FAIL', validated: true, session_id, session_found, processed: true });
+      }
+
+      // Machine-safe subset surface for Phase 3 only.
+      response.phase3 = {
+        session_id: next.session_id,
+        state: next.state,
+        local_entered: next.local_entered,
+        remote_entered: next.remote_entered
+      };
+    }
   } catch {
     return fail({ code: 'PROCESSOR_FAIL', validated: true, session_id, session_found, processed: false });
   }

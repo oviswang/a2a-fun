@@ -150,3 +150,133 @@ test('local protocol-over-transport E2E: invalid input fail-closed (missing enve
     await nodeB.close();
   }
 });
+
+// -----------------------------
+// Phase 3 wiring (minimal): formalInboundEntry -> protocolProcessor -> Phase3 session/probe transition
+// -----------------------------
+
+test('phase3 wired path: SESSION_PROBE_INIT via processor hook advances NEW -> LOCAL_ENTERED (machine-safe)', async () => {
+  const { formalInboundEntry } = await import('../src/runtime/inbound/formalInboundEntry.mjs');
+
+  const protocolProcessor = {
+    async processInbound() {
+      return {
+        session_apply_result: { next_state: { state: 'DISCONNECTED' } },
+        audit_records: [],
+        phase3_session_probe_message: { kind: 'SESSION_PROBE_INIT', session_id: 's1', peer_actor_id: 'h:sha256:peer' }
+      };
+    }
+  };
+
+  const out = await formalInboundEntry(
+    {
+      envelope: makeValidEnvelope('s1')
+    },
+    {
+      storage: { async readSession() { return null; } },
+      protocolProcessor
+    }
+  );
+
+  assert.equal(out.ok, true);
+  assert.equal(out.processed, true);
+  assert.deepEqual(out.response.phase3, {
+    session_id: 's1',
+    state: 'LOCAL_ENTERED',
+    local_entered: true,
+    remote_entered: false
+  });
+
+  // Surface must remain machine-safe: no raw envelope, no decrypted body.
+  assert.ok(!('envelope' in out));
+  assert.ok(!('decrypted_body' in out));
+});
+
+test('phase3 wired path: SESSION_PROBE_ACK via processor hook advances LOCAL_ENTERED -> PROBING', async () => {
+  const { formalInboundEntry } = await import('../src/runtime/inbound/formalInboundEntry.mjs');
+
+  const protocolProcessor = {
+    async processInbound() {
+      return {
+        session_apply_result: { next_state: { state: 'DISCONNECTED' } },
+        audit_records: [],
+        phase3_session_state: {
+          session_id: 's1',
+          peer_actor_id: 'h:sha256:peer',
+          state: 'LOCAL_ENTERED',
+          local_entered: true,
+          remote_entered: false
+        },
+        phase3_session_probe_message: { kind: 'SESSION_PROBE_ACK', session_id: 's1', peer_actor_id: 'h:sha256:peer' }
+      };
+    }
+  };
+
+  const out = await formalInboundEntry(
+    {
+      envelope: makeValidEnvelope('s1')
+    },
+    {
+      storage: { async readSession() { return null; } },
+      protocolProcessor
+    }
+  );
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.response.phase3, {
+    session_id: 's1',
+    state: 'PROBING',
+    local_entered: true,
+    remote_entered: true
+  });
+});
+
+test('phase3 wired path: unsupported message kind fails closed with machine-safe error', async () => {
+  const { formalInboundEntry } = await import('../src/runtime/inbound/formalInboundEntry.mjs');
+
+  const protocolProcessor = {
+    async processInbound() {
+      return {
+        session_apply_result: { next_state: { state: 'DISCONNECTED' } },
+        audit_records: [],
+        phase3_session_probe_message: { kind: 'NOPE', session_id: 's1', peer_actor_id: 'h:sha256:peer' }
+      };
+    }
+  };
+
+  const out = await formalInboundEntry(
+    { envelope: makeValidEnvelope('s1') },
+    { storage: { async readSession() { return null; } }, protocolProcessor }
+  );
+
+  assert.equal(out.ok, false);
+  assert.equal(out.error.code, 'UNKNOWN_KIND');
+  assert.equal(out.processed, true);
+  assert.equal(out.response, null);
+});
+
+test('phase3 wired path: deterministic output shape (keys stable)', async () => {
+  const { formalInboundEntry } = await import('../src/runtime/inbound/formalInboundEntry.mjs');
+
+  const protocolProcessor = {
+    async processInbound() {
+      return {
+        session_apply_result: { next_state: { state: 'DISCONNECTED' } },
+        audit_records: [],
+        phase3_session_probe_message: { kind: 'SESSION_PROBE_INIT', session_id: 's1', peer_actor_id: 'h:sha256:peer' }
+      };
+    }
+  };
+
+  const a = await formalInboundEntry(
+    { envelope: makeValidEnvelope('s1') },
+    { storage: { async readSession() { return null; } }, protocolProcessor }
+  );
+  const b = await formalInboundEntry(
+    { envelope: makeValidEnvelope('s1') },
+    { storage: { async readSession() { return null; } }, protocolProcessor }
+  );
+
+  assert.deepEqual(Object.keys(a), Object.keys(b));
+  assert.equal(JSON.stringify(a), JSON.stringify(b));
+});
