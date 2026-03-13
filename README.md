@@ -160,6 +160,14 @@ See:
 - `start-node.sh`
 - `BOOTSTRAP.md`
 
+Bootstrap servers (explicit configuration placeholders):
+- Primary: `https://gw.bothook.me`
+- Fallback: `https://bootstrap.a2a.fun`
+
+Notes:
+- Attempt primary first, fallback if unreachable.
+- No discovery/mesh/routing is implemented in the frozen phases.
+
 ---
 
 ## 10) Future directions
