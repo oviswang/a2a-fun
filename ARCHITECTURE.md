@@ -1,8 +1,30 @@
-# a2a.fun — System Architecture (Frozen through Phase 4)
+# a2a.fun — System Architecture (Network Baseline Frozen)
 
 Status:
-- Phase 1, Phase 2, Phase 3, Friendship Trigger layer, and Phase 4 are frozen.
+- Protocol stack phases are frozen (Phase 1–7 + Friendship Trigger Layer + Runtime Formal Outbound Variant).
+- Network baseline components are also frozen at the documentation level (auto-join, transport baseline, relay guardrails).
 - This document describes the architecture as implemented and the hard boundaries between layers.
+
+---
+
+## 0) Network Baseline (Bootstrap + Auto-Join + Transport + Relay)
+
+Baseline network components (all transport-only; below protocol semantics):
+- **Bootstrap server** (candidate peers only): `POST /join`, `GET /peers`
+- **Auto-join** (opt-in): joins bootstrap, fetches peers, selects deterministically, persists `data/known-peers.json`
+- **Known peers**: minimal local record of selected peers (no friend graph propagation)
+- **Transport selection** (frozen baseline):
+  - direct peer transport is primary
+  - relay transport is fallback
+  - mailbox is not part of the baseline always-on path
+- **Reachability probe** (direct): minimal HTTP reachability check; no protocol semantics
+- **Relay layer**:
+  - relayServer + relayClient; relay is dumb/stateless/opaque forwarder (see `RELAY_GUARDRAILS.md`)
+- **Inbound bridges**:
+  - directInbound / relayInbound only hand off payload to an injected `onInbound(payload)`
+
+Hard statement:
+- Transport must not interpret protocol, must not mutate envelopes, and must not embed friendship logic.
 
 ---
 
@@ -151,6 +173,24 @@ remote/local messages
 ### Phase 4 (probe engine)
 - `src/phase4/probe/probeEngine.mjs`
   - `probeEngine.next({ state, transcript })` deterministic probe suggestion engine
+
+### Network baseline (bootstrap / auto-join / transport / relay)
+- Bootstrap server:
+  - `src/bootstrap/bootstrapServer.mjs`
+- Auto-join:
+  - `src/runtime/bootstrap/bootstrapClient.mjs`
+  - `src/runtime/bootstrap/nodeAutoJoin.mjs`
+- Transport baseline:
+  - `src/runtime/transport/checkDirectReachability.mjs`
+  - `src/runtime/transport/selectTransport.mjs`
+  - `src/runtime/transport/decideTransport.mjs`
+  - `src/runtime/transport/executeTransport.mjs`
+- Relay:
+  - `src/relay/relayServer.mjs`
+  - `src/runtime/transport/relayClient.mjs`
+- Inbound bridges:
+  - `src/runtime/inbound/directInbound.mjs`
+  - `src/runtime/inbound/relayInbound.mjs`
 
 ---
 

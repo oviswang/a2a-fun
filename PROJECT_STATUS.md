@@ -1,6 +1,6 @@
 # a2a.fun — Project Status (All Planned Phases Frozen)
 
-Date: 2026-03-13 (Asia/Shanghai)
+Date: 2026-03-14 (Asia/Shanghai)
 
 All currently planned phases are frozen.
 This document is the final status summary of the implemented system and its hard boundaries.
@@ -16,6 +16,12 @@ This document is the final status summary of the implemented system and its hard
 - Phase 4 — Frozen
 - Phase 5 — Frozen
 - Phase 6 — Frozen
+- Phase 7 — Frozen (builder + formal outbound variant)
+
+Network baseline (documentation-level freezes):
+- `AUTO_JOIN_FROZEN.md` — auto-join bootstrap flow frozen
+- `TRANSPORT_BASELINE_FROZEN.md` — transport baseline frozen
+- `RELAY_GUARDRAILS.md` — relay layer guardrails
 
 ---
 
@@ -65,6 +71,16 @@ This document is the final status summary of the implemented system and its hard
 - Optional probe wiring
 - Optional friendship trigger wiring (disabled by default)
 - Test-stub outbound mode only (disabled by default; localhost-only)
+
+### Network baseline — Bootstrap + Auto-Join + Transport + Relay (Frozen)
+- Bootstrap server (`gw.bothook.me`): `/join`, `/peers` (candidate peer source; no trust)
+- Auto-join (opt-in): joins bootstrap, fetches peers, selects deterministically, persists `data/known-peers.json`
+- Transport baseline (direct first, relay second; mailbox not baseline):
+  - `checkDirectReachability`, `selectTransport`, `decideTransport`, `executeTransport`
+  - inbound bridges: `directInbound`, `relayInbound`
+- Relay layer:
+  - `relayServer`: dumb/stateless/opaque forwarder
+  - `relayClient`: outbound WS, register node_id, forward received payloads to inbound callback
 
 ---
 

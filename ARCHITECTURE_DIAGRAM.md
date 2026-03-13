@@ -12,6 +12,56 @@ Legend:
 - [BEHAVIOR] = deterministic logic suggestions (no state writes)
 - [SIDE-EFFECT] = persistence/action outside protocol core
 - [WIRING] = runtime I/O and orchestration
+- [TRANSPORT] = delivery only (no protocol semantics)
+
+Network baseline (direct primary, relay fallback; mailbox not baseline):
+
+```
+        ┌──────────────────────┐
+        │ Bootstrap (gw)        │
+        │  POST /join           │
+        │  GET  /peers          │
+        └─────────┬────────────┘
+                  │ candidate peers (no trust)
+                  v
+        ┌──────────────────────┐
+        │ Auto-Join (opt-in)    │
+        │  select peers         │
+        │  persist known-peers  │
+        └─────────┬────────────┘
+                  │
+                  v
+        ┌──────────────────────────────────────────┐
+        │ Transport decision (baseline)             │
+        │  checkDirectReachability (HTTP probe)     │
+        │  selectTransport: direct first, relay 2nd │
+        └─────────┬────────────────────────────────┘
+                  │
+      ┌───────────┴───────────┐
+      │                       │
+      v                       v
+┌───────────────┐     ┌──────────────────┐
+│ Direct [TRAN] │     │ Relay [TRAN]     │
+│ HTTP POST     │     │ WS client/server │
+└───────┬───────┘     └────────┬─────────┘
+        │                      │
+        v                      v
+┌──────────────────┐   ┌──────────────────┐
+│ directInbound     │   │ relayInbound      │
+│ onInbound(payload)│   │ onInbound(payload)│
+└─────────┬────────┘   └─────────┬────────┘
+          │                      │
+          └──────────┬───────────┘
+                     v
+        ┌──────────────────────────────────────────┐
+        │ Protocol boundary [CORE]                 │
+        │  payload treated as opaque by transport  │
+        └──────────────────────────────────────────┘
+
+Mailbox: NOT part of baseline always-on path.
+```
+
+---
 
 ```
                           ┌────────────────────────────────────────────┐
