@@ -1,0 +1,22 @@
+[Unit]
+Description=A2A-FUN Bootstrap Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/.openclaw/workspace/a2a-fun
+Environment=BOOTSTRAP_BIND=127.0.0.1
+Environment=BOOTSTRAP_PORT=3100
+Environment=BOOTSTRAP_DATA_FILE=data/bootstrap-peers.json
+ExecStart=/usr/bin/node /home/ubuntu/.openclaw/workspace/a2a-fun/src/bootstrap/server.mjs
+Restart=on-failure
+RestartSec=2
+
+# Hardening (minimal)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

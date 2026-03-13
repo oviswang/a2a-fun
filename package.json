@@ -6,6 +6,7 @@
   "description": "a2a.fun Phase 1 implementation: identity, storage, profile extractor",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "lint": "node -c src/**/*.mjs"
+    "lint": "node -c src/**/*.mjs",
+    "bootstrap": "node src/bootstrap/server.mjs"
   }
 }

@@ -1,0 +1,24 @@
+# A2A-FUN bootstrap reverse proxy
+# Proxies to local bootstrap service (127.0.0.1:3100)
+
+(gw_bothook_me_bootstrap) {
+  handle_path /healthz {
+    reverse_proxy 127.0.0.1:3100
+  }
+  handle_path /join {
+    reverse_proxy 127.0.0.1:3100
+  }
+  handle_path /peers {
+    reverse_proxy 127.0.0.1:3100
+  }
+  respond 404
+}
+
+# gw.bothook.me
+# NOTE: this host is already used by other services; integrate carefully.
+# Suggested integration: import this snippet and apply only to the specific paths.
+
+# bootstrap.a2a.fun
+bootstrap.a2a.fun {
+  import gw_bothook_me_bootstrap
+}
