@@ -62,17 +62,8 @@ test('formal inbound entry: validated envelope + session handoff + processor cal
     validated: true,
     session_id: 's1',
     session_found: true,
-    state: {
-      session_id: 's1',
-      state: 'DISCONNECTED',
-      peer_actor_id: 'h:sha256:a',
-      peer_key_fpr: null,
-      local_entered: false,
-      remote_entered: false,
-      closed_reason: null
-    },
     processed: true,
-    processor_result: { session_apply_result_state: 'DISCONNECTED', audit_records_count: 0 },
+    response: { session_apply_result_state: 'DISCONNECTED', audit_records_count: 0 },
     error: null
   });
 });
@@ -89,7 +80,7 @@ test('formal inbound entry: validated envelope + session not found still reaches
   assert.equal(out.validated, true);
   assert.equal(out.session_found, false);
   assert.equal(out.processed, true);
-  assert.deepEqual(out.processor_result, { session_apply_result_state: 'DISCONNECTED', audit_records_count: 0 });
+  assert.deepEqual(out.response, { session_apply_result_state: 'DISCONNECTED', audit_records_count: 0 });
 });
 
 test('formal inbound entry: processor failure fails closed with machine-safe result', async () => {
@@ -105,17 +96,41 @@ test('formal inbound entry: processor failure fails closed with machine-safe res
   });
 
   const out = await formalInboundEntry({ envelope: makeValidEnvelope('s1') }, { protocolProcessor: pp });
-  assert.deepEqual(out, { ok: false, error: { code: 'PROCESSOR_FAIL' } });
+  assert.deepEqual(out, {
+    ok: false,
+    validated: true,
+    session_id: 's1',
+    session_found: null,
+    processed: false,
+    response: null,
+    error: { code: 'PROCESSOR_FAIL' }
+  });
 });
 
 test('formal inbound entry: missing envelope fails closed', async () => {
   const out = await formalInboundEntry({}, { protocolProcessor: makeProtocolProcessorOk() });
-  assert.deepEqual(out, { ok: false, error: { code: 'MISSING_ENVELOPE' } });
+  assert.deepEqual(out, {
+    ok: false,
+    validated: false,
+    session_id: null,
+    session_found: null,
+    processed: null,
+    response: null,
+    error: { code: 'MISSING_ENVELOPE' }
+  });
 });
 
 test('formal inbound entry: non-object payload fails closed', async () => {
   const out = await formalInboundEntry('nope', { protocolProcessor: makeProtocolProcessorOk() });
-  assert.deepEqual(out, { ok: false, error: { code: 'INVALID_PAYLOAD' } });
+  assert.deepEqual(out, {
+    ok: false,
+    validated: false,
+    session_id: null,
+    session_found: null,
+    processed: null,
+    response: null,
+    error: { code: 'INVALID_PAYLOAD' }
+  });
 });
 
 test('formal inbound entry: deterministic machine-safe output shape', async () => {
@@ -124,4 +139,8 @@ test('formal inbound entry: deterministic machine-safe output shape', async () =
   const b = await formalInboundEntry({ envelope: makeValidEnvelope('s1') }, { protocolProcessor: pp });
   assert.deepEqual(Object.keys(a), Object.keys(b));
   assert.equal(JSON.stringify(a), JSON.stringify(b));
+
+  // Must not expose decrypted contents or raw envelope.
+  assert.ok(!('decrypted_body' in a));
+  assert.ok(!('envelope' in a));
 });
