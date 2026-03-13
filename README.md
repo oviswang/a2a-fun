@@ -161,11 +161,12 @@ See:
 - `BOOTSTRAP.md`
 
 Bootstrap servers (explicit configuration placeholders):
-- Primary: `https://gw.bothook.me`
-- Fallback: `https://bootstrap.a2a.fun`
+- Primary (active): `https://gw.bothook.me`
+- Fallback (inactive until DNS exists): `https://bootstrap.a2a.fun`
 
 Notes:
-- Attempt primary first, fallback if unreachable.
+- Attempt primary first.
+- Only attempt fallback if fallback DNS resolves; otherwise treat fallback as inactive.
 - No discovery/mesh/routing is implemented in the frozen phases.
 
 ---

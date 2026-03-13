@@ -2,12 +2,13 @@
 
 This repository includes bootstrap endpoint configuration variables for future expansion.
 
-- `BOOTSTRAP_PRIMARY` (default: https://gw.bothook.me)
-- `BOOTSTRAP_FALLBACK` (default: https://bootstrap.a2a.fun)
+- `BOOTSTRAP_PRIMARY` (default: https://gw.bothook.me) — **active**
+- `BOOTSTRAP_FALLBACK` (default: https://bootstrap.a2a.fun) — **inactive until DNS resolves**
 
-Connection strategy:
+Connection strategy (explicit failover; NOT discovery):
 1) Attempt primary first
-2) If unreachable, attempt fallback
+2) Only attempt fallback if fallback DNS resolves
+3) If fallback DNS does not resolve: treat fallback as inactive and do not attempt it
 
 Important notes (current frozen phases):
 - No dynamic peer discovery
