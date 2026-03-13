@@ -21,7 +21,7 @@ function fail(code) {
   return { ok: false, error: { code } };
 }
 
-export async function formalInboundEntry(payload, { storage } = {}) {
+export async function formalInboundEntry(payload, { storage, protocolProcessor } = {}) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return fail('INVALID_PAYLOAD');
   if (!('envelope' in payload)) return fail('MISSING_ENVELOPE');
 
@@ -38,14 +38,16 @@ export async function formalInboundEntry(payload, { storage } = {}) {
   const session_id = env.session_id;
   if (typeof session_id !== 'string' || !session_id) return fail('INVALID_ENVELOPE');
 
-  // Minimal session handoff (no protocolProcessor call in this step).
+  // Minimal session handoff.
   let session_found = null;
   let state = null;
+  let stateForProcessor = null;
 
   if (storage && typeof storage.readSession === 'function') {
     const snap = await storage.readSession(session_id);
     if (snap) {
       session_found = true;
+      stateForProcessor = snap;
       // Only return a minimal safe subset.
       state = {
         session_id: snap.session_id ?? session_id,
@@ -61,6 +63,34 @@ export async function formalInboundEntry(payload, { storage } = {}) {
     }
   }
 
+  if (!stateForProcessor) {
+    // Minimal default consistent with the current runtime boundary.
+    stateForProcessor = {
+      session_id,
+      peer_actor_id: env.from?.actor_id ?? 'h:sha256:unknown',
+      state: 'DISCONNECTED',
+      local_entered: false,
+      remote_entered: false
+    };
+  }
+
+  if (!protocolProcessor || typeof protocolProcessor.processInbound !== 'function') {
+    return fail('MISSING_PROCESSOR');
+  }
+
+  let processed = false;
+  let processor_result = null;
+  try {
+    const r = await protocolProcessor.processInbound({ envelope: env, state: stateForProcessor });
+    processed = true;
+    processor_result = {
+      session_apply_result_state: r?.session_apply_result?.next_state?.state ?? null,
+      audit_records_count: Array.isArray(r?.audit_records) ? r.audit_records.length : null
+    };
+  } catch {
+    return fail('PROCESSOR_FAIL');
+  }
+
   // Deterministic output shape.
   return {
     ok: true,
@@ -68,6 +98,8 @@ export async function formalInboundEntry(payload, { storage } = {}) {
     session_id,
     session_found,
     state,
+    processed,
+    processor_result,
     error: null
   };
 }
