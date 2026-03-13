@@ -54,7 +54,10 @@ Environment variables (see `.env.example`):
 Auto-join (explicit bootstrap join; NOT discovery):
 - `ENABLE_AUTO_JOIN` (default: false)
 - `MAX_BOOTSTRAP_PEERS` (default: 3; range 1..3)
-- `SELF_NODE_URL` (required if enabling auto-join)
+- `SELF_NODE_URL` (required if enabling auto-join; missing/invalid must fail closed; no guessing)
+
+Clarification:
+- auto-join != auto-connect: this phase does NOT open peer sessions, does NOT handshake, and does NOT start probing with peers.
 
 ## Bootstrap connection
 

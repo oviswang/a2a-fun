@@ -18,5 +18,12 @@ Important notes (current frozen phases):
 Auto-join (runtime-adjacent, additive):
 - Nodes may optionally POST themselves to `/join`, fetch `/peers`, and select up to N peers deterministically.
 - This is explicit bootstrap join only; it is NOT a discovery network.
+- auto-join != auto-connect: this phase does NOT open peer sessions, does NOT handshake, and does NOT start probing with peers.
+
+Persistence format (stable, minimal):
+- `data/known-peers.json`
+  - `source`: bootstrap base URL used
+  - `selected_peers`: string[] (normalized http/https URLs; self excluded)
+  - `updated_at`: ISO timestamp
 
 Bootstrap endpoints are placeholders for explicit, trusted entry points.

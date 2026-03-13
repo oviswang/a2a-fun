@@ -188,3 +188,26 @@ test('auto-join: no friendship side-effects', async () => {
 
   assert.equal(out.ok, true);
 });
+
+test('auto-join: primary reachable but business failure must NOT fallback (fail closed)', async () => {
+  const httpClient = makeHttpClient({
+    // Primary reachable but returns ok:false
+    [`POST ${joinUrl(primary)}`]: { json: { ok: false } },
+
+    // Fallback routes exist but must not be used.
+    [`POST ${joinUrl(fallback)}`]: { json: { ok: true } },
+    [`GET ${peersUrl(fallback)}`]: { json: { ok: true, peers: ['https://p2.example.com'] } }
+  });
+
+  await assert.rejects(
+    () =>
+      runNodeAutoJoin({
+        selfNodeUrl: self,
+        bootstrapPrimary: primary,
+        bootstrapFallback: fallback,
+        maxPeers: 3,
+        httpClient
+      }),
+    /join failed/
+  );
+});

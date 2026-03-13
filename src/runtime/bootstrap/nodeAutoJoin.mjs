@@ -93,6 +93,13 @@ export async function runNodeAutoJoin({
 }
 
 async function persistKnownPeers({ storage, selected, base }) {
+  // Stable persistence format (minimal):
+  // data/known-peers.json
+  // {
+  //   "source": "<bootstrap base url>",
+  //   "selected_peers": ["https://.../", ...],
+  //   "updated_at": "<ISO timestamp>"
+  // }
   const record = {
     source: base,
     selected_peers: selected,

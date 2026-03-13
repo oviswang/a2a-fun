@@ -63,25 +63,23 @@ await announceBootstrapPlan({ primary: BOOTSTRAP_PRIMARY, fallback: BOOTSTRAP_FA
 
 // Optional node auto-join flow (explicit bootstrap join; NOT discovery).
 if (envBool('ENABLE_AUTO_JOIN', false)) {
+  // Fail closed on missing/invalid SELF_NODE_URL.
+  // Do NOT attempt to guess the node URL.
   const selfNodeUrl = process.env.SELF_NODE_URL;
   if (!selfNodeUrl) {
-    console.log('Auto-join disabled: SELF_NODE_URL not set');
-  } else {
-    const maxPeers = Number(process.env.MAX_BOOTSTRAP_PEERS || 3);
-    try {
-      const httpClient = createFetchHttpClient({ timeoutMs: 5000 });
-      const res = await runNodeAutoJoin({
-        selfNodeUrl,
-        bootstrapPrimary: BOOTSTRAP_PRIMARY,
-        bootstrapFallback: BOOTSTRAP_FALLBACK,
-        maxPeers,
-        httpClient
-      });
-      console.log(`Auto-join result: ${JSON.stringify(res)}`);
-    } catch (e) {
-      console.log(`Auto-join failed (fail closed): ${String(e.message || e)}`);
-    }
+    throw new Error('Auto-join misconfigured: ENABLE_AUTO_JOIN=true but SELF_NODE_URL missing');
   }
+
+  const maxPeers = Number(process.env.MAX_BOOTSTRAP_PEERS || 3);
+  const httpClient = createFetchHttpClient({ timeoutMs: 5000 });
+  const res = await runNodeAutoJoin({
+    selfNodeUrl,
+    bootstrapPrimary: BOOTSTRAP_PRIMARY,
+    bootstrapFallback: BOOTSTRAP_FALLBACK,
+    maxPeers,
+    httpClient
+  });
+  console.log(`Auto-join result: ${JSON.stringify(res)}`);
 }
 
 const identity = {
