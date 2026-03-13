@@ -20,6 +20,12 @@ Auto-join (runtime-adjacent, additive):
 - This is explicit bootstrap join only; it is NOT a discovery network.
 - auto-join != auto-connect: this phase does NOT open peer sessions, does NOT handshake, and does NOT start probing with peers.
 
+Bootstrap peer filtering (server-side, minimal + deterministic):
+- `/join` rejects unusable node URLs (fail closed).
+- `/peers` excludes unusable entries, including:
+  - `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`
+  - obvious placeholder domains under `example.com` (e.g. `node.example.com`)
+
 Persistence format (stable, minimal):
 - `data/known-peers.json`
   - `source`: bootstrap base URL used

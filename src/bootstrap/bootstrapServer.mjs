@@ -60,6 +60,31 @@ function validateNodeUrl(raw) {
   return normalized;
 }
 
+function isUnusableHostname(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  if (!h) return true;
+
+  // Local-only / non-routable.
+  if (h === 'localhost') return true;
+  if (h === '127.0.0.1') return true;
+  if (h === '0.0.0.0') return true;
+  if (h === '::1') return true;
+
+  // Obvious placeholders.
+  if (h === 'example.com' || h.endsWith('.example.com')) return true;
+
+  return false;
+}
+
+function isUsablePeerUrl(normalizedUrl) {
+  try {
+    const u = new URL(normalizedUrl);
+    return !isUnusableHostname(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function readPeersFile(filePath) {
   try {
     const txt = await fs.readFile(filePath, 'utf8');
@@ -94,7 +119,9 @@ export function createBootstrapServer({ bindHost = '127.0.0.1', port = 3100, dat
 
       if (req.method === 'GET' && req.url === '/peers') {
         const { peers } = await readPeersFile(dataFile);
-        return json(res, 200, { ok: true, peers });
+        const filtered = peers.filter(isUsablePeerUrl);
+        filtered.sort();
+        return json(res, 200, { ok: true, peers: filtered });
       }
 
       if (req.method === 'POST' && req.url === '/join') {
@@ -114,8 +141,14 @@ export function createBootstrapServer({ bindHost = '127.0.0.1', port = 3100, dat
           return json(res, 400, safeError(code, 'invalid node url'));
         }
 
+        if (!isUsablePeerUrl(node)) {
+          return json(res, 400, safeError('UNUSABLE_NODE', 'unusable node url'));
+        }
+
         const { peers } = await readPeersFile(dataFile);
-        const set = new Set(peers);
+        // Clean on write: drop unusable peers (localhost / placeholders).
+        const cleaned = peers.filter(isUsablePeerUrl);
+        const set = new Set(cleaned);
         set.add(node);
         const next = Array.from(set);
         next.sort();
@@ -136,8 +169,17 @@ export function createBootstrapServer({ bindHost = '127.0.0.1', port = 3100, dat
     }
   });
 
+  let boundAddress = null;
+
   return {
-    start: async () => new Promise((resolve) => server.listen(port, bindHost, resolve)),
+    start: async () =>
+      new Promise((resolve) =>
+        server.listen(port, bindHost, () => {
+          boundAddress = server.address();
+          resolve();
+        })
+      ),
+    address: () => boundAddress,
     close: async () => new Promise((resolve) => server.close(() => resolve()))
   };
 }
