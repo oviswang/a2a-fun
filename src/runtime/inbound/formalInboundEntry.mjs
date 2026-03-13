@@ -15,6 +15,8 @@
  * candidate formal envelope object.
  */
 
+import { validateEnvelope } from '../../phase2/envelope/envelope.schema.mjs';
+
 function fail(code) {
   return { ok: false, error: { code } };
 }
@@ -26,13 +28,13 @@ export function formalInboundEntry(payload) {
   const env = payload.envelope;
   if (!env || typeof env !== 'object' || Array.isArray(env)) return fail('INVALID_ENVELOPE');
 
-  // Minimal candidate checks (machine-safe): required string identifiers.
-  // Full schema validation remains in Phase 2 frozen modules.
-  const requiredStringFields = ['session_id', 'msg_id', 'ts', 'type', 'sig', 'ciphertext'];
-  for (const k of requiredStringFields) {
-    if (typeof env[k] !== 'string' || !env[k].trim()) return fail('INVALID_ENVELOPE');
+  // Strict Phase 2 envelope validation (frozen).
+  try {
+    validateEnvelope(env);
+  } catch {
+    return fail('INVALID_ENVELOPE');
   }
 
   // Deterministic output shape.
-  return { ok: true, error: null };
+  return { ok: true, validated: true, error: null };
 }
