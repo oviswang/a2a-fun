@@ -8,6 +8,14 @@ All phases referenced here are frozen/completed; this is documentation only.
 - Payload unchanged at `relayInbound → onInbound(payload)`.
 - Drop-safe behavior observed (`type: dropped` when target not connected).
 
+**A2A-FUN v1 Protocol Runtime Baseline — Proven**
+- Real two-machine relay protocol-over-transport validated.
+- Relay path actually used.
+- `formalInboundEntry` reached on Machine B.
+- `protocolProcessor` invoked on Machine B for valid envelope.
+- Machine-safe response/result produced.
+- Invalid input failed closed before processor invocation.
+
 ---
 
 ## 1) System overview diagram (major layers + flow)
@@ -61,10 +69,13 @@ Network baseline (direct primary, relay fallback; mailbox not baseline):
         ┌──────────────────────────────────────────┐
         │ Protocol boundary [CORE]                 │
         │  payload treated as opaque by transport  │
+        │  formalInboundEntry → protocolProcessor  │
+        │  → machine-safe result                   │
         └──────────────────────────────────────────┘
 
 Mailbox: NOT part of baseline always-on path.
 Proven (v1): two-machine relay path delivers payload unchanged at relayInbound → onInbound(payload).
+Proven (v1): two-machine relay protocol-over-transport reached formalInboundEntry → protocolProcessor → machine-safe result.
 ```
 
 ---

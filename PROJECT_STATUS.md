@@ -10,6 +10,14 @@ This document is the final status summary of the implemented system and its hard
 - Payload unchanged at `relayInbound → onInbound(payload)`.
 - Relay drop-safe behavior observed (`type: dropped` when target not connected).
 
+**A2A-FUN v1 Protocol Runtime Baseline — Proven**
+- Real two-machine relay protocol-over-transport validated.
+- Relay path actually used.
+- `formalInboundEntry` reached on Machine B.
+- `protocolProcessor` invoked on Machine B for a valid envelope.
+- Machine-safe response/result produced.
+- Invalid input failed closed before processor invocation.
+
 ---
 
 ## 1) Completed frozen phases
@@ -82,6 +90,15 @@ Proven boundary (v1 baseline):
 - Real two-machine relay end-to-end validated.
 - Payload preserved unchanged at the final inbound handoff: `relayInbound → onInbound(payload)`.
 - Drop-safe behavior observed when target not connected.
+
+### Protocol runtime baseline — Formal Inbound → Processor → Machine-safe Response (Proven)
+Proven boundary (v1 baseline):
+- Real two-machine relay protocol-over-transport validated.
+- Relay path actually used.
+- `formalInboundEntry` reached on Machine B.
+- `protocolProcessor.processInbound({ envelope, state })` invoked on Machine B for valid envelope.
+- Machine-safe response/result produced.
+- Invalid input failed closed before processor invocation.
 
 Components:
 - Bootstrap server (`gw.bothook.me`): `/join`, `/peers` (candidate peer source; no trust)
