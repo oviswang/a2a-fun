@@ -3,6 +3,7 @@
 Status:
 - Protocol stack phases are frozen (Phase 1–7 + Friendship Trigger Layer + Runtime Formal Outbound Variant).
 - Network baseline components are also frozen at the documentation level (auto-join, transport baseline, relay guardrails).
+- **A2A-FUN v1 Network Baseline — Proven** (real two-machine relay E2E validated; payload unchanged at `relayInbound → onInbound(payload)`; drop-safe behavior observed).
 - This document describes the architecture as implemented and the hard boundaries between layers.
 
 ---
@@ -25,6 +26,17 @@ Baseline network components (all transport-only; below protocol semantics):
 
 Hard statement:
 - Transport must not interpret protocol, must not mutate envelopes, and must not embed friendship logic.
+
+Proven boundary (v1 baseline):
+- Two real machines successfully delivered an opaque payload via relay fallback.
+- Payload was unchanged at the final inbound handoff: `relayInbound → onInbound(payload)`.
+- Drop-safe behavior was observed when the target node_id was not connected.
+
+Intentionally unimplemented (still out of baseline scope):
+- runtime-wide always-on orchestration
+- mailbox/offline queue
+- queue/retry/backoff
+- direct multi-machine proof in environments where inbound ports are unavailable
 
 ---
 

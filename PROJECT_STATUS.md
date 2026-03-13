@@ -5,6 +5,11 @@ Date: 2026-03-14 (Asia/Shanghai)
 All currently planned phases are frozen.
 This document is the final status summary of the implemented system and its hard boundaries.
 
+**A2A-FUN v1 Network Baseline — Proven**
+- Real two-machine relay end-to-end validated (relay fallback path).
+- Payload unchanged at `relayInbound → onInbound(payload)`.
+- Relay drop-safe behavior observed (`type: dropped` when target not connected).
+
 ---
 
 ## 1) Completed frozen phases
@@ -72,7 +77,13 @@ Network baseline (documentation-level freezes):
 - Optional friendship trigger wiring (disabled by default)
 - Test-stub outbound mode only (disabled by default; localhost-only)
 
-### Network baseline — Bootstrap + Auto-Join + Transport + Relay (Frozen)
+### Network baseline — Bootstrap + Auto-Join + Transport + Relay (Frozen + Proven)
+Proven boundary (v1 baseline):
+- Real two-machine relay end-to-end validated.
+- Payload preserved unchanged at the final inbound handoff: `relayInbound → onInbound(payload)`.
+- Drop-safe behavior observed when target not connected.
+
+Components:
 - Bootstrap server (`gw.bothook.me`): `/join`, `/peers` (candidate peer source; no trust)
 - Auto-join (opt-in): joins bootstrap, fetches peers, selects deterministically, persists `data/known-peers.json`
 - Transport baseline (direct first, relay second; mailbox not baseline):
@@ -137,10 +148,14 @@ Note:
 
 ## 5) Explicitly not implemented yet
 
+- runtime-wide automatic orchestration (always-on direct/relay switching across the whole runtime)
+- mailbox / offline queue
+- queue/retry/backoff infrastructure
+- direct multi-machine proof in environments where inbound ports are unavailable (relay is the proven path)
+
 - discovery
 - formal runtime egress envelope
 - distributed runtime
-- advanced retry/reconnect
 - transcript persistence
 - advanced probe strategy
 - key rotation acceptance

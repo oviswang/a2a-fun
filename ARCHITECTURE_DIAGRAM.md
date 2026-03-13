@@ -3,6 +3,11 @@
 This document provides a visual/structural architecture view of the A2A-FUN protocol stack.
 All phases referenced here are frozen/completed; this is documentation only.
 
+**A2A-FUN v1 Network Baseline — Proven**
+- Real two-machine relay end-to-end validated.
+- Payload unchanged at `relayInbound → onInbound(payload)`.
+- Drop-safe behavior observed (`type: dropped` when target not connected).
+
 ---
 
 ## 1) System overview diagram (major layers + flow)
@@ -59,6 +64,7 @@ Network baseline (direct primary, relay fallback; mailbox not baseline):
         └──────────────────────────────────────────┘
 
 Mailbox: NOT part of baseline always-on path.
+Proven (v1): two-machine relay path delivers payload unchanged at relayInbound → onInbound(payload).
 ```
 
 ---
