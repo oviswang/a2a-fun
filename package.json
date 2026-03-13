@@ -1,0 +1,11 @@
+{
+  "name": "a2a-fun",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0-phase1",
+  "description": "a2a.fun Phase 1 implementation: identity, storage, profile extractor",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "lint": "node -c src/**/*.mjs"
+  }
+}
