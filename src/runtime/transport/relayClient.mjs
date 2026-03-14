@@ -44,13 +44,7 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, r
 
     ws = new WebSocket(relayUrl);
 
-    await new Promise((resolve, reject) => {
-      ws.addEventListener('open', resolve, { once: true });
-      ws.addEventListener('error', reject, { once: true });
-    });
-
-    connected = true;
-
+    // Attach message handler BEFORE registration send (avoid missing 'registered').
     let didRegister = false;
     const registeredPromise = new Promise((resolve) => {
       ws.addEventListener(
@@ -100,7 +94,15 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, r
       { once: true }
     );
 
-    // Register.
+    // Wait for socket open (or early connect error) AFTER handlers are attached.
+    await new Promise((resolve, reject) => {
+      ws.addEventListener('open', resolve, { once: true });
+      ws.addEventListener('error', reject, { once: true });
+    });
+
+    connected = true;
+
+    // Register (send only after open).
     if (registrationMode === 'v1') {
       ws.send(JSON.stringify({ type: 'register', node: nodeId }));
     } else {
