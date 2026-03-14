@@ -1,3 +1,5 @@
+import { bestEffortEmitSocialFeed } from '../../social/socialFeedRuntimeHook.mjs';
+
 function safeError(code, reason) {
   return { ok: false, error: { code, reason } };
 }
@@ -62,7 +64,20 @@ export async function bootstrapGetPeers({ bootstrapUrl, httpClient }) {
 
   assertPeersShape(json.peers);
 
-  return { ok: true, peers: json.peers.map(validateNodeUrl) };
+  const peers = json.peers.map(validateNodeUrl);
+
+  // Best-effort social feed: discovered_agent from bootstrap peer list.
+  // Minimal: emit at most one event per fetch.
+  if (peers.length > 0) {
+    bestEffortEmitSocialFeed({
+      event_type: 'discovered_agent',
+      peer_agent_id: peers[0],
+      summary: 'discovered via bootstrap peers',
+      details: { source: 'bootstrap_peers' }
+    }).catch(() => {});
+  }
+
+  return { ok: true, peers };
 }
 
 export function createFetchHttpClient({ timeoutMs = 5000 } = {}) {

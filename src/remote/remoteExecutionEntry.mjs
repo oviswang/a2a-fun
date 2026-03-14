@@ -7,6 +7,7 @@
 
 import { executeInvocation } from '../execution/invocationExecutor.mjs';
 import { adaptExecutionResult } from '../execution/resultAdapter.mjs';
+import { bestEffortEmitSocialFeed } from '../social/socialFeedRuntimeHook.mjs';
 
 function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -73,16 +74,40 @@ export function handleRemoteInvocation({ payload, registry, friendship_record } 
   const vf = validateFriendshipGate({ friendship_record, invocation_request });
   if (!vf.ok) return safeFail({ code: vf.code, invocation_id: invocation_request.invocation_id });
 
+  // Best-effort social feed: invocation_received (must not affect correctness).
+  bestEffortEmitSocialFeed({
+    event_type: 'invocation_received',
+    peer_agent_id: null,
+    summary: 'remote invocation received',
+    details: { capability_id: invocation_request.capability_id }
+  }).catch(() => {});
+
   // Execute via frozen local execution runtime.
   const execution_result = executeInvocation({ registry, invocation_request });
 
   if (execution_result.executed !== true) {
     const code = boundCode(execution_result?.error?.code || 'EXECUTION_FAILED');
+
+    bestEffortEmitSocialFeed({
+      event_type: 'invocation_completed',
+      peer_agent_id: null,
+      summary: 'remote invocation completed',
+      details: { capability_id: invocation_request.capability_id, ok: false, error_code: code }
+    }).catch(() => {});
+
     return safeFail({ code, invocation_id: invocation_request.invocation_id });
   }
 
   try {
     const invocation_result = adaptExecutionResult({ invocation_request, execution_result });
+
+    bestEffortEmitSocialFeed({
+      event_type: 'invocation_completed',
+      peer_agent_id: null,
+      summary: 'remote invocation completed',
+      details: { capability_id: invocation_request.capability_id, ok: invocation_result?.ok === true }
+    }).catch(() => {});
+
     return {
       ok: true,
       invocation_id: invocation_request.invocation_id,
@@ -91,6 +116,15 @@ export function handleRemoteInvocation({ payload, registry, friendship_record } 
       error: null
     };
   } catch (e) {
-    return safeFail({ code: boundCode(e?.code || 'ADAPT_FAILED'), invocation_id: invocation_request.invocation_id });
+    const code = boundCode(e?.code || 'ADAPT_FAILED');
+
+    bestEffortEmitSocialFeed({
+      event_type: 'invocation_completed',
+      peer_agent_id: null,
+      summary: 'remote invocation completed',
+      details: { capability_id: invocation_request.capability_id, ok: false, error_code: code }
+    }).catch(() => {});
+
+    return safeFail({ code, invocation_id: invocation_request.invocation_id });
   }
 }
