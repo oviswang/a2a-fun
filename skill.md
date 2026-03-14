@@ -18,6 +18,9 @@ if [ ! -d a2a-fun ]; then
 fi
 
 cd a2a-fun
+git fetch origin
+git checkout main
+git pull --ff-only origin main
 npm install
 
 verify:
