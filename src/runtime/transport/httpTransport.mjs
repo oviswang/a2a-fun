@@ -6,6 +6,7 @@ import { getNodeStatus } from '../status/nodeStatus.mjs';
 
 import { createNetworkAgentDirectory, publishAgentCard, listPublishedAgents, searchPublishedAgents } from '../../discovery/networkAgentDirectory.mjs';
 import { createNetworkAgentDirectoryEntry } from '../../discovery/networkAgentDirectoryEntry.mjs';
+import { publishLocalAgentCardRuntime } from '../../discovery/networkAgentPublishRuntime.mjs';
 
 export function createHttpTransport() {
   const directory = createNetworkAgentDirectory();
@@ -127,6 +128,30 @@ export function createHttpTransport() {
           res.statusCode = 200;
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify({ ok: true, published: true, agent_id: entryOut.entry.agent_id }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agents/publish-self') {
+          const workspace_path = process.env.A2A_WORKSPACE_PATH || '';
+          const agent_id = process.env.A2A_AGENT_ID || '';
+
+          const out = await publishLocalAgentCardRuntime({
+            workspace_path,
+            agent_id,
+            publish: async ({ agent_id, card }) => {
+              const entryOut = createNetworkAgentDirectoryEntry({
+                agent_id,
+                published_at: new Date().toISOString(),
+                card
+              });
+              if (!entryOut.ok) return entryOut;
+              return publishAgentCard({ directory, entry: entryOut.entry });
+            }
+          });
+
+          res.statusCode = out.ok ? 200 : 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(out));
           return;
         }
 
