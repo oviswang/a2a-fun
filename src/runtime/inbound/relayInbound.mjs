@@ -11,7 +11,7 @@
  * - no envelope mutation
  * - no friendship logic
  */
-export async function handleRelayInbound(message, { onInbound } = {}) {
+export async function handleRelayInbound(message, { onInbound, onRemoteHumanJoinSignal } = {}) {
   if (typeof onInbound !== 'function') {
     const e = new Error('handleRelayInbound: missing onInbound');
     e.code = 'INVALID_INPUT';
@@ -28,5 +28,19 @@ export async function handleRelayInbound(message, { onInbound } = {}) {
     throw e;
   }
 
-  return onInbound(message.payload);
+  const payload = message.payload;
+
+  // Minimal inbound wiring hook: allow dispatch of REMOTE_HUMAN_JOIN_SIGNAL.
+  // Default behavior remains unchanged unless onRemoteHumanJoinSignal is provided.
+  if (
+    onRemoteHumanJoinSignal &&
+    typeof onRemoteHumanJoinSignal === 'function' &&
+    payload &&
+    typeof payload === 'object' &&
+    payload.kind === 'REMOTE_HUMAN_JOIN_SIGNAL'
+  ) {
+    return onRemoteHumanJoinSignal({ payload, from: message.from });
+  }
+
+  return onInbound(payload);
 }
