@@ -7,7 +7,7 @@ test('agentScout: lists remote agents, removes self, returns deterministic candi
   const sharedClient = {
     listPublishedAgentsRemote: async () => ({
       ok: true,
-      agents: [{ agent_id: 'nodeA' }, { agent_id: 'nodeC' }, { agent_id: 'nodeB' }]
+      agents: [{ agent_id: ' nodeA ' }, { agent_id: 'nodeC' }, { agent_id: 'nodeB' }]
     })
   };
 

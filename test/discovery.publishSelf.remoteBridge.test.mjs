@@ -39,12 +39,21 @@ test('POST /agents/publish-self: local publish works and remote publish success 
     let remoteCalled = false;
 
     await withFetch(async (url, init) => {
-      if (String(url).startsWith('https://bootstrap.a2a.fun/agents/publish')) {
+      const u = String(url);
+      if (u.startsWith('https://bootstrap.a2a.fun/agents/publish')) {
         remoteCalled = true;
         return {
           ok: true,
           async json() {
             return { ok: true, published: true, agent_id: 'nodeSelf' };
+          }
+        };
+      }
+      if (u === 'https://bootstrap.a2a.fun/agents') {
+        return {
+          ok: true,
+          async json() {
+            return { ok: true, agents: [{ agent_id: 'nodeSelf' }] };
           }
         };
       }
@@ -59,6 +68,42 @@ test('POST /agents/publish-self: local publish works and remote publish success 
     });
 
     assert.equal(remoteCalled, true);
+  } finally {
+    await srv.close();
+    process.env.A2A_WORKSPACE_PATH = prevEnv.A2A_WORKSPACE_PATH;
+    process.env.A2A_AGENT_ID = prevEnv.A2A_AGENT_ID;
+  }
+});
+
+test('POST /agents/publish-self: remote publish ok but not visible -> remote_published false', async () => {
+  const workspace = await makeWorkspace('nodeSelf');
+  const prevEnv = { A2A_WORKSPACE_PATH: process.env.A2A_WORKSPACE_PATH, A2A_AGENT_ID: process.env.A2A_AGENT_ID };
+  process.env.A2A_WORKSPACE_PATH = workspace;
+  process.env.A2A_AGENT_ID = 'nodeSelf';
+
+  const t = createHttpTransport();
+  const srv = await t.startServer({ port: 0, onMessage: async () => ({ ok: true }) });
+
+  try {
+    const base = `http://127.0.0.1:${srv.port}`;
+
+    await withFetch(async (url, init) => {
+      const u = String(url);
+      if (u.startsWith('https://bootstrap.a2a.fun/agents/publish')) {
+        return { ok: true, async json() { return { ok: true, published: true, agent_id: 'nodeSelf' }; } };
+      }
+      if (u === 'https://bootstrap.a2a.fun/agents') {
+        return { ok: true, async json() { return { ok: true, agents: [] }; } };
+      }
+      return realFetch(url, init);
+    }, async () => {
+      const r = await fetch(`${base}/agents/publish-self`, { method: 'POST' });
+      assert.equal(r.status, 200);
+      const j = await r.json();
+      assert.equal(j.ok, true);
+      assert.equal(j.local_published, true);
+      assert.equal(j.remote_published, false);
+    });
   } finally {
     await srv.close();
     process.env.A2A_WORKSPACE_PATH = prevEnv.A2A_WORKSPACE_PATH;

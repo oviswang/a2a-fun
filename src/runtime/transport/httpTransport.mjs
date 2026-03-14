@@ -9,7 +9,7 @@ import { createNetworkAgentDirectoryEntry } from '../../discovery/networkAgentDi
 import { publishLocalAgentCardRuntime } from '../../discovery/networkAgentPublishRuntime.mjs';
 import { extractAgentDiscoveryDocuments } from '../../discovery/agentDocumentExtractor.mjs';
 import { buildAgentCardFromDocuments } from '../../discovery/agentCardBuilder.mjs';
-import { publishAgentCardRemote } from '../../discovery/sharedAgentDirectoryClient.mjs';
+import { publishAgentCardRemote, listPublishedAgentsRemote } from '../../discovery/sharedAgentDirectoryClient.mjs';
 
 export function createHttpTransport() {
   const directory = createNetworkAgentDirectory();
@@ -176,6 +176,7 @@ export function createHttpTransport() {
           const local_published = localOut.ok === true;
 
           // Best-effort remote publish to bootstrap-backed shared directory.
+          // Mark remote_published=true only if publish succeeds AND agent becomes visible in remote /agents.
           let remote_published = false;
           try {
             const remoteOut = await publishAgentCardRemote({
@@ -183,7 +184,13 @@ export function createHttpTransport() {
               agent_id: entryOut.entry.agent_id,
               card: cardOut.agent_card
             });
-            remote_published = remoteOut.ok === true;
+
+            if (remoteOut.ok === true) {
+              const listOut = await listPublishedAgentsRemote({ base_url: 'https://bootstrap.a2a.fun' });
+              if (listOut.ok === true && Array.isArray(listOut.agents)) {
+                remote_published = listOut.agents.some((a) => a && a.agent_id === entryOut.entry.agent_id);
+              }
+            }
           } catch {
             remote_published = false;
           }

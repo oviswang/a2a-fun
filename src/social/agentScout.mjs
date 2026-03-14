@@ -14,14 +14,14 @@ export async function scoutAgentsFromSharedDirectory({ sharedClient, base_url, l
     return fail('INVALID_LOCAL_AGENT_CARD');
   }
 
-  const selfId = local_agent_card.agent_id;
+  const selfId = String(local_agent_card.agent_id || '').trim();
 
   try {
     const out = await sharedClient.listPublishedAgentsRemote({ base_url });
     if (!out || out.ok !== true || !Array.isArray(out.agents)) return fail(out?.error?.code || 'DIRECTORY_FETCH_FAILED');
 
     const ids = out.agents
-      .map((a) => (a && typeof a.agent_id === 'string' ? a.agent_id : null))
+      .map((a) => (a && typeof a.agent_id === 'string' ? a.agent_id.trim() : null))
       .filter((x) => typeof x === 'string' && x && x !== selfId);
 
     const uniq = [...new Set(ids)].sort((a, b) => String(a).localeCompare(String(b)));
