@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 function safeJsonParse(s) {
   try {
     return JSON.parse(s);
@@ -21,10 +23,17 @@ function safeJsonParse(s) {
  * - transport selection/orchestration
  * - persistence / queue / retry
  */
-export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect } = {}) {
+export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, registrationMode = 'v1', sessionId } = {}) {
   if (!relayUrl) throw new Error('relayClient: missing relayUrl');
   if (!nodeId) throw new Error('relayClient: missing nodeId');
   if (typeof onForward !== 'function') throw new Error('relayClient: missing onForward');
+
+  if (registrationMode !== 'v1' && registrationMode !== 'v2') throw new Error('relayClient: invalid registrationMode');
+
+  // v2 requires a stable per-client session_id. Generate once per client instance if not provided.
+  const stableSessionId = registrationMode === 'v2'
+    ? (typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : `sess:${crypto.randomUUID()}`)
+    : null;
 
   let ws = null;
   let connected = false;
@@ -50,10 +59,20 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect } 
           if (!msg || typeof msg !== 'object') return;
 
           // Registration ack.
-          if (msg.ok === true && msg.type === 'registered' && msg.node === nodeId) {
-            didRegister = true;
-            resolve(true);
-            return;
+          if (registrationMode === 'v1') {
+            if (msg.ok === true && msg.type === 'registered' && msg.node === nodeId) {
+              didRegister = true;
+              resolve(true);
+              return;
+            }
+          }
+
+          if (registrationMode === 'v2') {
+            if (msg.ok === true && msg.type === 'registered' && msg.node_id === nodeId && msg.session_id === stableSessionId) {
+              didRegister = true;
+              resolve(true);
+              return;
+            }
           }
 
           // Forwarded messages are opaque: { from, payload }
@@ -75,7 +94,11 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect } 
     );
 
     // Register.
-    ws.send(JSON.stringify({ type: 'register', node: nodeId }));
+    if (registrationMode === 'v1') {
+      ws.send(JSON.stringify({ type: 'register', node: nodeId }));
+    } else {
+      ws.send(JSON.stringify({ type: 'register', node_id: nodeId, session_id: stableSessionId }));
+    }
 
     // Fail closed if registration never completes quickly.
     const timer = setTimeout(() => {
