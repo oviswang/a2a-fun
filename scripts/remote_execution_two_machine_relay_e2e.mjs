@@ -202,6 +202,8 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
 
   const unreachablePeerUrl = 'http://127.0.0.1:9/';
 
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   // 1) Success path
   const invOk = makeInvocationRequest({ capability_id: 'cap_echo', payload: { msg: 'hi' } });
   expectedById.set(invOk.invocation_id, 'success');
@@ -218,6 +220,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
     invocation_request: invOk
   });
   console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'success', invocation_id: invOk.invocation_id, transport_used: send1.transport_used }));
+  await sleep(500);
 
   // 2) Unknown handler fail-closed
   const invMissing = makeInvocationRequest({ capability_id: 'cap_missing', payload: { msg: 'x' } });
@@ -235,6 +238,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
     invocation_request: invMissing
   });
   console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'unknown_handler', invocation_id: invMissing.invocation_id, transport_used: send2.transport_used }));
+  await sleep(500);
 
   // 3) Invalid kind fail-closed (use a distinct invocation_id)
   const invBadKind = makeInvocationRequest({ capability_id: 'cap_echo', payload: { msg: 'badkind' } });
@@ -249,6 +253,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
     relayTo: to
   });
   console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'invalid_kind', invocation_id: invBadKind.invocation_id, transport_used: send3.transport }));
+  await sleep(500);
 
   // 4) Friendship gate fail-closed
   const invGate = makeInvocationRequest({ friendship_id: 'fr_other', capability_id: 'cap_echo', payload: { msg: 'gate' } });
