@@ -18,9 +18,10 @@
  *   node scripts/remote_execution_two_machine_relay_e2e.mjs a --relayUrl ws://<relay-host>:18884/relay --nodeId nodeA --to nodeB
  */
 
-import { createRelayServer } from '../src/relay/relayServer.mjs';
+import { createRelayServerV2 } from '../src/relay/relayServerV2.mjs';
 import { createRelayClient } from '../src/runtime/transport/relayClient.mjs';
 import { executeTransport } from '../src/runtime/transport/executeTransport.mjs';
+import { decideTransport } from '../src/runtime/transport/decideTransport.mjs';
 import { handleRelayInbound } from '../src/runtime/inbound/relayInbound.mjs';
 
 import { createCapabilityReference } from '../src/capability/capabilityReference.mjs';
@@ -54,12 +55,90 @@ function parseArgs(argv) {
   return out;
 }
 
+async function executeTransportRelayV2({ sessionId, ackRole = null, ...args } = {}) {
+  // Harness-only transport wrapper: preserve executeTransport semantics, but
+  // ensure the relay path uses Relay v2 registration mode + explicit sessionId.
+  const { peerUrl, payload, relayAvailable, timeoutMs = 3000 } = args || {};
+
+  const decision = await decideTransport({ peerUrl, timeoutMs, relayAvailable: !!relayAvailable });
+
+  if (decision.transport === 'direct') {
+    // Delegate to frozen transport for direct.
+    return executeTransport({ peerUrl, payload, relayAvailable: false, timeoutMs });
+  }
+
+  if (decision.transport === 'relay') {
+    const { relayUrl, nodeId, relayTo } = args || {};
+    if (!relayUrl || !nodeId) {
+      const e = new Error('executeTransportRelayV2: relayUrl and nodeId required for relay transport');
+      e.code = 'RELAY_MISCONFIGURED';
+      throw e;
+    }
+
+    let ackResolve = null;
+    const ackP = new Promise((r) => {
+      ackResolve = r;
+    });
+
+    const onAck = (ack) => {
+      if (ackRole) {
+        console.log(
+          JSON.stringify({
+            ok: true,
+            role: ackRole,
+            event: 'relay_ack',
+            status: ack?.status ?? null,
+            reason: ack?.reason ?? null,
+            trace_id: ack?.trace_id ?? null
+          })
+        );
+      }
+      if (ackResolve) ackResolve(true);
+    };
+
+    const client = createRelayClient({
+      relayUrl,
+      nodeId,
+      registrationMode: 'v2',
+      sessionId: sessionId || null,
+      onAck,
+      onForward: () => {
+        // outbound-only
+      }
+    });
+
+    try {
+      await client.connect();
+      await client.relay({ to: relayTo || peerUrl, payload });
+
+      // Ack is not required for correctness; wait briefly so sender-socket ack
+      // frames have a chance to arrive before we close the connection.
+      await Promise.race([ackP, new Promise((r) => setTimeout(r, 50))]);
+
+      return {
+        ok: true,
+        transport: 'relay',
+        directReachable: decision.directReachable,
+        relayAvailable: decision.relayAvailable,
+        reason: decision.reason,
+        status: null
+      };
+    } finally {
+      await client.close().catch(() => {});
+    }
+  }
+
+  const e = new Error('executeTransportRelayV2: unsupported transport');
+  e.code = 'INTERNAL';
+  throw e;
+}
+
 async function runRelay({ host = '127.0.0.1', port = 18884 } = {}) {
-  const srv = createRelayServer({ bindHost: host, port: Number(port), wsPath: '/relay' });
+  const srv = createRelayServerV2({ bindHost: host, port: Number(port), wsPath: '/relay' });
   await srv.start();
   const addr = srv.address();
   const url = `ws://${addr.address}:${addr.port}/relay`;
-  console.log(JSON.stringify({ ok: true, role: 'relay', relayUrl: url }));
+  console.log(JSON.stringify({ ok: true, role: 'relay', relayUrl: url, relayVersion: 'v2' }));
 }
 
 function makeInvocationRequest({ friendship_id = 'fr_1', capability_id = 'cap_echo', payload = { msg: 'hi' } } = {}) {
@@ -71,7 +150,7 @@ function makeInvocationRequest({ friendship_id = 'fr_1', capability_id = 'cap_ec
   return createCapabilityInvocationRequest({ capability_reference, payload });
 }
 
-async function runMachineB({ relayUrl, nodeId = 'nodeB', to = 'nodeA' } = {}) {
+async function runMachineB({ relayUrl, nodeId = 'nodeB', sessionId = 'sb', to = 'nodeA' } = {}) {
   if (!relayUrl) throw new Error('--relayUrl required');
 
   const friendship_record = { friendship_id: 'fr_1', established: true };
@@ -83,9 +162,25 @@ async function runMachineB({ relayUrl, nodeId = 'nodeB', to = 'nodeA' } = {}) {
     handler: (payload) => ({ echoed: String(payload.msg || '') })
   });
 
+  const onAck = (ack) => {
+    console.log(
+      JSON.stringify({
+        ok: true,
+        role: 'machineB',
+        event: 'relay_ack',
+        status: ack?.status ?? null,
+        reason: ack?.reason ?? null,
+        trace_id: ack?.trace_id ?? null
+      })
+    );
+  };
+
   const client = createRelayClient({
     relayUrl,
     nodeId,
+    registrationMode: 'v2',
+    sessionId,
+    onAck,
     onForward: async (msg) => {
       await handleRelayInbound(msg, {
         onInbound: async (payload) => {
@@ -109,13 +204,14 @@ async function runMachineB({ relayUrl, nodeId = 'nodeB', to = 'nodeA' } = {}) {
 
           // Send result back to Machine A via relay path.
           const unreachablePeerUrl = 'http://127.0.0.1:9/';
+          const txNodeId = `${nodeId}-tx`;
           await sendRemoteInvocationResult({
-            transport: executeTransport,
+            transport: (args) => executeTransportRelayV2({ sessionId: `${sessionId}-tx`, ackRole: 'machineB', ...args }),
             peer: {
               peerUrl: unreachablePeerUrl,
               relayAvailable: true,
               relayUrl,
-              nodeId,
+              nodeId: txNodeId,
               relayTo: to
             },
             invocation_result
@@ -141,19 +237,35 @@ async function runMachineB({ relayUrl, nodeId = 'nodeB', to = 'nodeA' } = {}) {
   });
 
   await client.connect();
-  console.log(JSON.stringify({ ok: true, role: 'machineB', nodeId, connected: true }));
+  console.log(JSON.stringify({ ok: true, role: 'machineB', event: 'relay_registered', nodeId, sessionId, connected: true }));
 }
 
-async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
+async function runMachineA({ relayUrl, nodeId = 'nodeA', sessionId = 'sa', to = 'nodeB' } = {}) {
   if (!relayUrl) throw new Error('--relayUrl required');
 
   // Track expected results (by invocation_id) so Machine A can wait deterministically.
   const expectedById = new Map();
   const receivedById = new Map();
 
+  const onAck = (ack) => {
+    console.log(
+      JSON.stringify({
+        ok: true,
+        role: 'machineA',
+        event: 'relay_ack',
+        status: ack?.status ?? null,
+        reason: ack?.reason ?? null,
+        trace_id: ack?.trace_id ?? null
+      })
+    );
+  };
+
   const client = createRelayClient({
     relayUrl,
     nodeId,
+    registrationMode: 'v2',
+    sessionId,
+    onAck,
     onForward: async (msg) => {
       await handleRelayInbound(msg, {
         onInbound: async (payload) => {
@@ -198,10 +310,13 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   });
 
   await client.connect();
-  console.log(JSON.stringify({ ok: true, role: 'machineA', nodeId, connected: true }));
+  console.log(JSON.stringify({ ok: true, role: 'machineA', event: 'relay_registered', nodeId, sessionId, connected: true }));
 
   const unreachablePeerUrl = 'http://127.0.0.1:9/';
   const txNodeId = `${nodeId}-tx`;
+  const txSessionId = `${sessionId}-tx`;
+
+  const transport = (args) => executeTransportRelayV2({ sessionId: txSessionId, ackRole: 'machineA', ...args });
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -209,7 +324,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   const invOk = makeInvocationRequest({ capability_id: 'cap_echo', payload: { msg: 'hi' } });
   expectedById.set(invOk.invocation_id, 'success');
   const send1 = await sendRemoteInvocation({
-    transport: executeTransport,
+    transport,
     peer: {
       peerUrl: unreachablePeerUrl,
       relayAvailable: true,
@@ -227,7 +342,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   const invMissing = makeInvocationRequest({ capability_id: 'cap_missing', payload: { msg: 'x' } });
   expectedById.set(invMissing.invocation_id, 'unknown_handler');
   const send2 = await sendRemoteInvocation({
-    transport: executeTransport,
+    transport,
     peer: {
       peerUrl: unreachablePeerUrl,
       relayAvailable: true,
@@ -244,7 +359,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   // 3) Invalid kind fail-closed (use a distinct invocation_id)
   const invBadKind = makeInvocationRequest({ capability_id: 'cap_echo', payload: { msg: 'badkind' } });
   expectedById.set(invBadKind.invocation_id, 'invalid_kind');
-  const send3 = await executeTransport({
+  const send3 = await transport({
     peerUrl: unreachablePeerUrl,
     payload: { kind: 'WRONG_KIND', invocation_request: invBadKind },
     relayAvailable: true,
@@ -260,7 +375,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   const invGate = makeInvocationRequest({ friendship_id: 'fr_other', capability_id: 'cap_echo', payload: { msg: 'gate' } });
   expectedById.set(invGate.invocation_id, 'friendship_gate');
   const send4 = await sendRemoteInvocation({
-    transport: executeTransport,
+    transport,
     peer: {
       peerUrl: unreachablePeerUrl,
       relayAvailable: true,
@@ -299,8 +414,8 @@ async function main() {
   const role = args._[0];
 
   if (role === 'relay') return runRelay({ host: args.host, port: args.port });
-  if (role === 'b') return runMachineB({ relayUrl: args.relayUrl, nodeId: args.nodeId, to: args.to });
-  if (role === 'a') return runMachineA({ relayUrl: args.relayUrl, nodeId: args.nodeId, to: args.to });
+  if (role === 'b') return runMachineB({ relayUrl: args.relayUrl, nodeId: args.nodeId, sessionId: args.sessionId, to: args.to });
+  if (role === 'a') return runMachineA({ relayUrl: args.relayUrl, nodeId: args.nodeId, sessionId: args.sessionId, to: args.to });
 
   throw new Error('usage: relay|a|b');
 }
