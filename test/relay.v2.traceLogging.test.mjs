@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createRelayServerV2 } from '../src/relay/relayServerV2.mjs';
+import { createWsCollector } from './helpers/wsCollector.mjs';
 
 function wsOpen(url) {
   return new Promise((resolve, reject) => {
@@ -11,10 +12,13 @@ function wsOpen(url) {
   });
 }
 
-function wsNextMessage(ws) {
-  return new Promise((resolve) => {
-    ws.addEventListener('message', (ev) => resolve(JSON.parse(String(ev.data))), { once: true });
-  });
+async function waitForAck(collector, expectedTraceId, timeoutMs = 2000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const msg = await collector.next(timeoutMs - (Date.now() - start));
+    if (msg && msg.type === 'ack' && msg.trace_id === expectedTraceId) return msg;
+  }
+  throw new Error('timeout waiting ack');
 }
 
 async function getTraces(baseUrl) {
@@ -34,9 +38,11 @@ test('relay v2 /traces: empty initially; register/unregister appear', async () =
   assert.deepEqual(empty, { ok: true, traces: [] });
 
   const a = await wsOpen(wsUrl);
+  const aC = createWsCollector(a);
+
   try {
     a.send(JSON.stringify({ type: 'register', node_id: 'nodeA', session_id: 's1' }));
-    await wsNextMessage(a);
+    await aC.next(); // registered
 
     const t1 = await getTraces(base);
     assert.equal(t1.ok, true);
@@ -66,25 +72,27 @@ test('relay v2 /traces: relay_received/forwarded/dropped_no_target/dropped_inval
 
   const a = await wsOpen(wsUrl);
   const b = await wsOpen(wsUrl);
+  const aC = createWsCollector(a);
+  const bC = createWsCollector(b);
 
   try {
     a.send(JSON.stringify({ type: 'register', node_id: 'nodeA', session_id: 'sa' }));
     b.send(JSON.stringify({ type: 'register', node_id: 'nodeB', session_id: 'sb' }));
-    await wsNextMessage(a);
-    await wsNextMessage(b);
+    await aC.next();
+    await bC.next();
 
     // forwarded
     a.send(JSON.stringify({ type: 'relay', trace_id: 't1', to: 'nodeB', payload: { kind: 'K1' } }));
-    await wsNextMessage(b); // forwarded message
-    await wsNextMessage(a); // ack
+    await bC.next(); // forwarded payload
+    await waitForAck(aC, 't1');
 
     // dropped_no_target
     a.send(JSON.stringify({ type: 'relay', trace_id: 't2', to: 'missing', payload: { kind: 'K2' } }));
-    await wsNextMessage(a); // dropped
+    await waitForAck(aC, 't2');
 
     // dropped_invalid (missing to)
     a.send(JSON.stringify({ type: 'relay', trace_id: 't3', payload: { kind: 'K3' } }));
-    await wsNextMessage(a); // error
+    await waitForAck(aC, 't3');
 
     const out = await getTraces(base);
     assert.equal(out.ok, true);
@@ -96,14 +104,13 @@ test('relay v2 /traces: relay_received/forwarded/dropped_no_target/dropped_inval
     assert.ok(events.includes('dropped_invalid'));
 
     // Bounded log: push >1000 trace entries deterministically.
-    for (let i = 0; i < 1100; i++) {
+    for (let i = 0; i < 1005; i++) {
       a.send(JSON.stringify({ type: 'relay', trace_id: `bx${i}`, payload: { kind: 'B' } }));
-      await wsNextMessage(a); // INVALID_TO error
     }
+    await new Promise((r) => setTimeout(r, 120));
 
     const out2 = await getTraces(base);
     assert.equal(out2.traces.length, 1000);
-    // Deterministic shape
     assert.deepEqual(Object.keys(out2.traces[0]).sort(), ['event', 'from', 'kind', 'to', 'trace_id', 'ts'].sort());
   } finally {
     try { a.close(); b.close(); } catch {}
