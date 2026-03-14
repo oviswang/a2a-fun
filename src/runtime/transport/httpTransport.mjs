@@ -2,6 +2,7 @@ import http from 'node:http';
 
 import * as officialCapabilities from '../../../examples/capabilities/index.mjs';
 import { listCapabilities } from '../../capability/capabilityDiscoveryList.mjs';
+import { getNodeStatus } from '../status/nodeStatus.mjs';
 
 export function createHttpTransport() {
   /**
@@ -33,6 +34,27 @@ export function createHttpTransport() {
               capabilities: out.capabilities
             })
           );
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/status') {
+          const capsOut = listCapabilities({ registry: officialCapabilities });
+          const statusOut = getNodeStatus({
+            node_id: null,
+            relay_connected: false,
+            capabilities: capsOut.ok ? capsOut.capabilities : [],
+            peers: [],
+            friendships: []
+          });
+
+          // Fail closed to safe defaults if anything is invalid/unavailable.
+          const safe = statusOut.ok
+            ? statusOut
+            : getNodeStatus({ node_id: null, relay_connected: false, capabilities: [], peers: [], friendships: [] });
+
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(safe));
           return;
         }
 
