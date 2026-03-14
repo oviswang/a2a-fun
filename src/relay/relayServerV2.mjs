@@ -146,6 +146,30 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
   }
 
   const server = http.createServer((req, res) => {
+    // Minimal read-only diagnostics.
+    if (req.method === 'GET' && req.url === '/nodes') {
+      const nodes = [];
+      for (const e of entries.values()) {
+        nodes.push({
+          node_id: e.node_id,
+          session_id: e.session_id,
+          connected_at: e.connected_at,
+          last_seen: e.last_seen,
+          is_latest: latestByNode.get(e.node_id) === e.session_id
+        });
+      }
+      nodes.sort((a, b) => {
+        const n = String(a.node_id).localeCompare(String(b.node_id));
+        if (n !== 0) return n;
+        return String(a.session_id).localeCompare(String(b.session_id));
+      });
+
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ok: true, nodes }));
+      return;
+    }
+
     res.statusCode = 404;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }));
