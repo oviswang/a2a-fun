@@ -23,10 +23,11 @@ function safeJsonParse(s) {
  * - transport selection/orchestration
  * - persistence / queue / retry
  */
-export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, registrationMode = 'v1', sessionId } = {}) {
+export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, registrationMode = 'v1', sessionId, onAck } = {}) {
   if (!relayUrl) throw new Error('relayClient: missing relayUrl');
   if (!nodeId) throw new Error('relayClient: missing nodeId');
   if (typeof onForward !== 'function') throw new Error('relayClient: missing onForward');
+  if (typeof onAck !== 'undefined' && typeof onAck !== 'function') throw new Error('relayClient: onAck must be function');
 
   if (registrationMode !== 'v1' && registrationMode !== 'v2') throw new Error('relayClient: invalid registrationMode');
 
@@ -73,6 +74,12 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, r
               resolve(true);
               return;
             }
+          }
+
+          // Relay v2 ack messages.
+          if (msg.type === 'ack') {
+            if (typeof onAck === 'function') onAck(msg);
+            return;
           }
 
           // Forwarded messages are opaque: { from, payload }
