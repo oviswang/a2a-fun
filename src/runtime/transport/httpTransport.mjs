@@ -1,5 +1,8 @@
 import http from 'node:http';
 
+import * as officialCapabilities from '../../../examples/capabilities/index.mjs';
+import { listCapabilities } from '../../capability/capabilityDiscoveryList.mjs';
+
 export function createHttpTransport() {
   /**
    * Start an HTTP server.
@@ -12,6 +15,27 @@ export function createHttpTransport() {
 
     const server = http.createServer(async (req, res) => {
       try {
+        if (req.method === 'GET' && req.url === '/capabilities') {
+          const out = listCapabilities({ registry: officialCapabilities });
+          if (!out.ok) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: out.error?.code || 'FAIL_CLOSED' }));
+            return;
+          }
+
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(
+            JSON.stringify({
+              ok: true,
+              node_id: null,
+              capabilities: out.capabilities
+            })
+          );
+          return;
+        }
+
         if (req.method !== 'POST' || req.url !== '/message') {
           res.statusCode = 404;
           res.setHeader('content-type', 'application/json');

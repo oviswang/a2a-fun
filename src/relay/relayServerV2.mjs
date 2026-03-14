@@ -311,8 +311,12 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
 
           if (msg.type === 'relay') {
             if (!reg) {
-              trace({ event: 'dropped_invalid', trace_id: msg.trace_id ?? null, from: null, to: msg.to ?? null, kind: msg.payload?.kind ?? null });
+              const trace_id = msg.trace_id ?? null;
+              const kind = msg.payload?.kind ?? null;
+              trace({ event: 'dropped_invalid', trace_id, from: null, to: msg.to ?? null, kind });
               writeWsText(socket, { ok: false, error: { code: 'NOT_REGISTERED', reason: 'must register first' } });
+              writeWsText(socket, { type: 'ack', trace_id, status: 'dropped_invalid', reason: 'NOT_REGISTERED' });
+              trace({ event: 'ack', trace_id, from: null, to: msg.to ?? null, kind: 'dropped_invalid' });
               continue;
             }
 
@@ -323,8 +327,12 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
 
             const toRaw = typeof msg.to === 'string' ? msg.to.trim() : '';
             if (!toRaw) {
-              trace({ event: 'dropped_invalid', trace_id: msg.trace_id ?? null, from: reg.node_id, to: null, kind: msg.payload?.kind ?? null });
+              const trace_id = msg.trace_id ?? null;
+              const kind = msg.payload?.kind ?? null;
+              trace({ event: 'dropped_invalid', trace_id, from: reg.node_id, to: null, kind });
               writeWsText(socket, { ok: false, error: { code: 'INVALID_TO', reason: 'to required' } });
+              writeWsText(socket, { type: 'ack', trace_id, status: 'dropped_invalid', reason: 'INVALID_TO' });
+              trace({ event: 'ack', trace_id, from: reg.node_id, to: null, kind: 'dropped_invalid' });
               continue;
             }
 
@@ -340,6 +348,8 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
             if (!toSession) {
               trace({ event: 'dropped_no_target', trace_id, from: reg.node_id, to: toNode, kind });
               writeWsText(socket, { ok: true, type: 'dropped', to: toNode });
+              writeWsText(socket, { type: 'ack', trace_id, status: 'dropped_no_target', reason: 'NO_TARGET' });
+              trace({ event: 'ack', trace_id, from: reg.node_id, to: toNode, kind: 'dropped_no_target' });
               continue;
             }
 
@@ -347,12 +357,16 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
             if (!target || target.socket.destroyed) {
               trace({ event: 'dropped_no_target', trace_id, from: reg.node_id, to: toNode, kind });
               writeWsText(socket, { ok: true, type: 'dropped', to: toNode });
+              writeWsText(socket, { type: 'ack', trace_id, status: 'dropped_no_target', reason: 'NO_TARGET' });
+              trace({ event: 'ack', trace_id, from: reg.node_id, to: toNode, kind: 'dropped_no_target' });
               continue;
             }
 
             writeWsText(target.socket, { from: reg.node_id, payload: msg.payload ?? null });
             trace({ event: 'forwarded', trace_id, from: reg.node_id, to: toNode, kind });
             writeWsText(socket, { ok: true, type: 'relayed', to: toNode });
+            writeWsText(socket, { type: 'ack', trace_id, status: 'forwarded', reason: null });
+            trace({ event: 'ack', trace_id, from: reg.node_id, to: toNode, kind: 'forwarded' });
             continue;
           }
         }
