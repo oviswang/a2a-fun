@@ -41,4 +41,23 @@ export function applySocialFeedReply({ text, handoff_state, local_agent_id, remo
   return { ok: true, action: parsed.action, handoff_state: next.handoff_state, friendship_established: true, trust_edge: edge };
 }
 
+// Adapter-level wiring helper for Remote Human Join Signal v0.1.
+// If action is 'join', callers may provide {transport, peer, signal} to send the remote join.
+export async function applySocialFeedReplyAndSendRemoteJoin({ text, handoff_state, local_agent_id, remote_agent_id, transport, peer, signal, sendJoin } = {}) {
+  const out = applySocialFeedReply({ text, handoff_state, local_agent_id, remote_agent_id });
+  if (!out.ok) return out;
+
+  if (out.action === 'join') {
+    try {
+      if (typeof sendJoin === 'function') {
+        await sendJoin({ transport, peer, signal });
+      }
+    } catch {
+      // best-effort only
+    }
+  }
+
+  return out;
+}
+
 export const _internal = { applyRemoteJoinSignal };
