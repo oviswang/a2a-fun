@@ -4,7 +4,11 @@ import * as officialCapabilities from '../../../examples/capabilities/index.mjs'
 import { listCapabilities } from '../../capability/capabilityDiscoveryList.mjs';
 import { getNodeStatus } from '../status/nodeStatus.mjs';
 
+import { createNetworkAgentDirectory, publishAgentCard, listPublishedAgents, searchPublishedAgents } from '../../discovery/networkAgentDirectory.mjs';
+import { createNetworkAgentDirectoryEntry } from '../../discovery/networkAgentDirectoryEntry.mjs';
+
 export function createHttpTransport() {
+  const directory = createNetworkAgentDirectory();
   /**
    * Start an HTTP server.
    * Minimal receive endpoint:
@@ -55,6 +59,74 @@ export function createHttpTransport() {
           res.statusCode = 200;
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify(safe));
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/agents') {
+          const out = listPublishedAgents({ directory });
+          if (!out.ok) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: out.error?.code || 'FAIL_CLOSED' }));
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ ok: true, agents: out.agents }));
+          return;
+        }
+
+        if (req.method === 'GET' && typeof req.url === 'string' && req.url.startsWith('/agents/search')) {
+          const u = new URL(req.url, 'http://127.0.0.1');
+          const q = u.searchParams.get('q') || '';
+          const out = searchPublishedAgents({ directory, query: q });
+          if (!out.ok) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: out.error?.code || 'FAIL_CLOSED' }));
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ ok: true, results: out.results }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/agents/publish') {
+          const raw = await readBody(req, 256 * 1024);
+          let json;
+          try {
+            json = JSON.parse(raw);
+          } catch {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'BAD_JSON' }));
+            return;
+          }
+
+          const entryOut = createNetworkAgentDirectoryEntry({
+            agent_id: json?.agent_id,
+            published_at: new Date().toISOString(),
+            card: json?.card
+          });
+          if (!entryOut.ok) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: entryOut.error?.code || 'FAIL_CLOSED' }));
+            return;
+          }
+
+          const pubOut = publishAgentCard({ directory, entry: entryOut.entry });
+          if (!pubOut.ok) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: pubOut.error?.code || 'FAIL_CLOSED' }));
+            return;
+          }
+
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ ok: true, published: true, agent_id: entryOut.entry.agent_id }));
           return;
         }
 
