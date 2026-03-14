@@ -139,11 +139,49 @@ export async function formalInboundEntry(payload, { storage, protocolProcessor }
       // Friendship Trigger Layer runtime primitive (candidate creation only).
       // Trigger condition (minimal): Phase 3 reaches PROBING.
       if (next.state === 'PROBING') {
-        response.friendship_candidate = createFriendshipCandidate({
+        const cand = createFriendshipCandidate({
           session_id: next.session_id,
           peer_actor_id: next.peer_actor_id,
           phase3_state: next.state
         });
+        response.friendship_candidate = cand;
+
+        // Optional runtime confirmations + persistence (explicitly requested by caller).
+        // Hard boundary: this must not affect protocol / phase3 semantics.
+        // It only post-processes the already-created candidate.
+        const wantLocal = payload.friendship_confirm_local === true;
+        const wantRemote = payload.friendship_confirm_remote === true;
+
+        let cur = cand;
+        if (wantLocal) {
+          try {
+            // Lazy import avoided; primitive is already in dependency graph.
+            const { confirmFriendshipCandidateLocally } = await import('../../friendship/friendshipConfirmation.mjs');
+            cur = confirmFriendshipCandidateLocally({ candidate: cur });
+            response.friendship_confirmation_local = cur;
+          } catch (e) {
+            return fail({ code: e?.code || 'FRIENDSHIP_LOCAL_CONFIRM_FAIL', validated: true, session_id, session_found, processed: true });
+          }
+        }
+
+        if (wantRemote) {
+          try {
+            const { confirmFriendshipCandidateRemotely } = await import('../../friendship/friendshipRemoteConfirmation.mjs');
+            cur = confirmFriendshipCandidateRemotely({ candidate: cur });
+            response.friendship_confirmation_remote = cur;
+          } catch (e) {
+            return fail({ code: e?.code || 'FRIENDSHIP_REMOTE_CONFIRM_FAIL', validated: true, session_id, session_found, processed: true });
+          }
+        }
+
+        if (wantRemote && cur?.mutually_confirmed === true) {
+          try {
+            const { triggerFriendshipPersistence } = await import('../../friendship/friendshipPersistenceTrigger.mjs');
+            response.friendship_record = triggerFriendshipPersistence({ candidate: cur });
+          } catch (e) {
+            return fail({ code: e?.code || 'FRIENDSHIP_PERSIST_FAIL', validated: true, session_id, session_found, processed: true });
+          }
+        }
       }
     }
   } catch {
