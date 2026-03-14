@@ -7,6 +7,9 @@ import { getNodeStatus } from '../status/nodeStatus.mjs';
 import { createNetworkAgentDirectory, publishAgentCard, listPublishedAgents, searchPublishedAgents } from '../../discovery/networkAgentDirectory.mjs';
 import { createNetworkAgentDirectoryEntry } from '../../discovery/networkAgentDirectoryEntry.mjs';
 import { publishLocalAgentCardRuntime } from '../../discovery/networkAgentPublishRuntime.mjs';
+import { extractAgentDiscoveryDocuments } from '../../discovery/agentDocumentExtractor.mjs';
+import { buildAgentCardFromDocuments } from '../../discovery/agentCardBuilder.mjs';
+import { publishAgentCardRemote } from '../../discovery/sharedAgentDirectoryClient.mjs';
 
 export function createHttpTransport() {
   const directory = createNetworkAgentDirectory();
@@ -135,21 +138,66 @@ export function createHttpTransport() {
           const workspace_path = process.env.A2A_WORKSPACE_PATH || '';
           const agent_id = process.env.A2A_AGENT_ID || '';
 
-          const out = await publishLocalAgentCardRuntime({
-            workspace_path,
+          // Build local AgentCard once.
+          const docsOut = await extractAgentDiscoveryDocuments({ workspace_path });
+          if (!docsOut.ok) {
+            const out = { ok: false, published: false, agent_id: null, local_published: false, remote_published: false, error: docsOut.error };
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify(out));
+            return;
+          }
+
+          const cardOut = buildAgentCardFromDocuments({ documents: docsOut.documents, agent_id });
+          if (!cardOut.ok) {
+            const out = { ok: false, published: false, agent_id: agent_id || null, local_published: false, remote_published: false, error: cardOut.error };
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify(out));
+            return;
+          }
+
+          // Publish locally (deterministic).
+          const entryOut = createNetworkAgentDirectoryEntry({
             agent_id,
-            publish: async ({ agent_id, card }) => {
-              const entryOut = createNetworkAgentDirectoryEntry({
-                agent_id,
-                published_at: new Date().toISOString(),
-                card
-              });
-              if (!entryOut.ok) return entryOut;
-              return publishAgentCard({ directory, entry: entryOut.entry });
-            }
+            published_at: new Date().toISOString(),
+            card: cardOut.agent_card
           });
 
-          res.statusCode = out.ok ? 200 : 400;
+          if (!entryOut.ok) {
+            const out = { ok: false, published: false, agent_id: agent_id || null, local_published: false, remote_published: false, error: entryOut.error };
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify(out));
+            return;
+          }
+
+          const localOut = publishAgentCard({ directory, entry: entryOut.entry });
+          const local_published = localOut.ok === true;
+
+          // Best-effort remote publish to bootstrap-backed shared directory.
+          let remote_published = false;
+          try {
+            const remoteOut = await publishAgentCardRemote({
+              base_url: 'https://bootstrap.a2a.fun',
+              agent_id: entryOut.entry.agent_id,
+              card: cardOut.agent_card
+            });
+            remote_published = remoteOut.ok === true;
+          } catch {
+            remote_published = false;
+          }
+
+          const out = {
+            ok: local_published,
+            published: local_published,
+            agent_id: entryOut.entry.agent_id,
+            local_published,
+            remote_published,
+            error: local_published ? null : (localOut.error || { code: 'LOCAL_PUBLISH_FAILED' })
+          };
+
+          res.statusCode = local_published ? 200 : 400;
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify(out));
           return;
