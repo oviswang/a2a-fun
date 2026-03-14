@@ -201,6 +201,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   console.log(JSON.stringify({ ok: true, role: 'machineA', nodeId, connected: true }));
 
   const unreachablePeerUrl = 'http://127.0.0.1:9/';
+  const txNodeId = `${nodeId}-tx`;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -213,7 +214,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
       peerUrl: unreachablePeerUrl,
       relayAvailable: true,
       relayUrl,
-      nodeId,
+      nodeId: txNodeId,
       relayTo: to,
       timeoutMs: 150
     },
@@ -231,7 +232,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
       peerUrl: unreachablePeerUrl,
       relayAvailable: true,
       relayUrl,
-      nodeId,
+      nodeId: txNodeId,
       relayTo: to,
       timeoutMs: 150
     },
@@ -249,7 +250,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
     relayAvailable: true,
     timeoutMs: 150,
     relayUrl,
-    nodeId,
+    nodeId: txNodeId,
     relayTo: to
   });
   console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'invalid_kind', invocation_id: invBadKind.invocation_id, transport_used: send3.transport }));
@@ -264,7 +265,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
       peerUrl: unreachablePeerUrl,
       relayAvailable: true,
       relayUrl,
-      nodeId,
+      nodeId: txNodeId,
       relayTo: to,
       timeoutMs: 150
     },
