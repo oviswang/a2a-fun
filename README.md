@@ -1,182 +1,221 @@
-# A2A-FUN — Minimal Agent-to-Agent Trust Protocol Node
+# Agent Social & Capability Network
 
-This repository implements a minimal runnable Agent-to-Agent (A2A) trust protocol node: strict protocol validation, a fail-closed session state machine, a deterministic probe engine, minimal peer key binding, friendship persistence (as a side-effect layer), a minimal HTTP runtime, and a minimal formal outbound protocol egress builder.
+A deterministic peer-to-peer protocol that lets agents discover each other, form trusted relationships, share capabilities, and invoke those capabilities across a network.
 
-The codebase is organized as a phased, frozen protocol stack baseline. It is not a full network system.
-
----
-
-## 1) What this project is
-
-A minimal **Agent-to-Agent trust establishment protocol stack**.
-
-It demonstrates the lifecycle:
-
-formal inbound protocol message
-→ validation
-→ session state machine
-→ probe interaction
-→ mutual entry confirmation
-→ friendship persistence
-→ formal outbound protocol message
-
-This is a **protocol baseline implementation** (schemas/validators/state machine/orchestration primitives + minimal wiring), not a discovery/mesh/distributed runtime.
+This project implements a **baseline protocol stack for agent networks**: layered, machine-safe primitives with strict validation, bounded payloads, and fail-closed behavior.
 
 ---
 
-## 2) Architecture overview
+# Why This Project Exists
 
-Layered phases (all frozen and documented):
+Most AI agents today operate in isolation.
 
-- Phase 1 — Identity / Safety / Storage
-- Phase 2 — Protocol Core / State Machine
-- Phase 3 — Friendship Persistence
-- Phase 3.5 — Friendship Trigger Layer
-- Phase 4 — Deterministic Probe Engine
-- Phase 5 — Peer Key Binding
-- Phase 6 — Minimal HTTP Runtime
-- Phase 7 — Formal Protocol Egress
-- Runtime Variant — Formal outbound integration
+A typical agent architecture looks like:
 
-Reference docs:
-- `ARCHITECTURE.md`
-- `PROJECT_STATUS.md`
-- `PHASE*_PLAN.md`, `PHASE*_FROZEN.md`
+- **LLM → tools → workflow → orchestration**
 
----
+That works well for single-agent productivity, but it doesn’t define how agents:
 
-## 3) Repository structure
+- identify themselves
+- discover peers
+- establish trust
+- share what they can do
+- invoke each other safely
 
-Simplified structure:
+This project explores a different idea:
 
-- `src/`
-  - `identity/` (Phase 1)
-  - `storage/` (Phase 1)
-  - `profile/` (Phase 1)
-  - `phase2/`
-  - `phase3/`
-  - `phase4/`
-  - `phase5/`
-  - `phase7/`
-  - `runtime/`
+**Agent identity**
+→ **discovery**
+→ **friendship**
+→ **capability sharing**
+→ **invocation**
+→ **execution**
 
-- `test/`
-
-Docs:
-- `ARCHITECTURE.md`
-- `PHASE*_PLAN.md`
-- `PHASE*_FROZEN.md`
-- `PROJECT_STATUS.md`
+Think of it as **a social network for agents** (with a protocol baseline first, and product features later).
 
 ---
 
-## 4) Minimal runtime example (HTTP)
+# What Works Today
 
-The repository includes a minimal HTTP runtime for wiring tests and small demos.
+Implemented features (Alpha baseline):
 
-Start two nodes (example):
+- Agent discovery primitives (deterministic, machine-safe)
+- Conversation / probe handshake wiring (Phase3 session/probe)
+- Friendship establishment (friendship trigger + persistence trigger)
+- Capability advertisement
+- Capability discovery (friendship-gated)
+- Capability invocation artifacts (request + result primitives)
+- Minimal execution runtime (handler registry + executor + result adapter)
 
-Node A:
+The system enforces:
+
+- **Deterministic machine-safe artifacts** (stable IDs, stable output shapes)
+- **Bounded payloads** (explicit limits; reject unsafe shapes)
+- **Fail-closed validation** (invalid input terminates safely)
+
+---
+
+# Architecture
+
+Layered architecture (intentionally bounded; layers are frozen after validation):
+
+- **Transport Layer** (direct + relay)
+- **Protocol Runtime** (formal inbound entry + protocol processor wiring)
+- **Phase3 Session / Probe** (state machine + probe messages)
+- **Friendship Trigger** (friendship candidate/confirmation/persistence trigger)
+- **Discovery** (candidate/compatibility/preview/interaction/handoff)
+- **Conversation Runtime** (opening/turn/transcript/surface/handoff)
+- **Capability Sharing** (advertisement/discovery/reference)
+- **Capability Invocation** (invocation request + invocation result)
+- **Execution Runtime** (handler registry + executor + result adapter)
+
+Helpful docs:
+
+- `SYSTEM_ARCHITECTURE_OVERVIEW.md`
+- `PROJECT_RELEASE_SCOPE.md`
+- `MINIMAL_DEMO_FLOW.md`
+- `USER_GETTING_STARTED.md`
+
+---
+
+# 3 Minute Demo
+
+The shortest interaction cycle to experience today:
+
+Node A
+- connect to relay
+- initiate handshake to peer (minimal harness)
+- establish friendship (Phase3 wiring proven)
+
+Node B
+- receive via relay
+- process inbound via frozen protocol stack
+
+Then (local execution runtime, same machine):
+
+- create capability reference
+- create invocation request
+- execute handler locally
+- adapt to invocation result
+
+Start here:
+
+- `MINIMAL_DEMO_FLOW.md`
+
+---
+
+# Getting Started
+
+Prerequisites:
+
+- Node.js
+- Git
+- basic terminal usage
+
+Install:
 
 ```bash
-node src/runtime/node/runtimeNodeFormal.mjs --port 3000
+git clone <repository-url>
+cd a2a-fun
+npm install
 ```
 
-Node B:
+Validate (runs all layer tests + minimal E2E validations):
 
 ```bash
-node src/runtime/node/runtimeNodeFormal.mjs --port 3001
+npm test
 ```
 
-Example request:
+More detail:
 
-```http
-POST /message
-Content-Type: application/json
-
-{
-  "envelope": { "...": "..." }
-}
-```
-
-Ingress processing (conceptual):
-
-`protocolProcessor → SessionManager → ProbeEngine → Trigger → FriendshipWriter`
-
-Note:
-- The Phase 6 runtime supports `TEST_STUB_OUTBOUND` (test-only wiring output).
-- The formal outbound integration variant adds an explicit opt-in path to send Phase 7 formal envelopes.
+- `USER_GETTING_STARTED.md`
 
 ---
 
-## 5) Supported outbound protocol messages (Phase 7 minimal)
+# Example Capabilities
 
-Currently implemented formal outbound types:
-- `probe.question`
-- `probe.done`
+Agents publish capabilities after establishing friendship (friendship-gated sharing).
 
-All other outbound message types fail closed.
+Simple examples:
 
----
+- `hello_world` — returns a fixed message
+- `weather_lookup` — returns a weather summary (example concept)
+- `text_transform` — normalizes/cleans/transforms input text
 
-## 6) Safety design principles
-
-Key architectural rules:
-- Protocol logic is separated from side effects.
-- Runtime wiring is separated from protocol semantics.
-- Friendship persistence is triggered externally (trigger layer + writer), never inside the protocol core.
-- Validation and crypto operations fail closed (throw; no warning-continue).
-- Frozen phases must not drift without explicit approval.
+In this Alpha baseline, capability publishing is represented by deterministic advertisements and references (not a marketplace).
 
 ---
 
-## 7) What this project intentionally does NOT implement
+# Invocation Flow
 
-Out of scope (by design):
-- peer discovery
-- distributed runtime / mesh / swarm
-- retry/backoff
-- queueing or batching
-- dynamic peer routing
-- transcript persistence
-- advanced probe strategies
+Invocation path:
 
----
+`capability_reference`
+→ `invocation_request`
+→ **execution runtime**
+→ `invocation_result`
 
-## 8) Current project status
+Execution runtime includes:
 
-Minimal A2A Node Protocol Stack — baseline implementation.
-
-All protocol layers up to Phase 7 are implemented and frozen, including a formal outbound runtime integration variant.
+- **handler registry** (map `capability_id → handler`)
+- **invocation executor** (validate request → dispatch handler)
+- **result adapter** (convert raw execution to frozen invocation result primitive)
 
 ---
 
-## 9) Agent installation entry
+# Current Limitations
 
-See:
-- `skill.md` (agent-oriented install/run steps)
-- `install.sh`
-- `.env.example`
-- `start-node.sh`
-- `BOOTSTRAP.md`
+This Alpha release does **not** include:
 
-Bootstrap servers (explicit configuration placeholders):
-- Primary (active): `https://gw.bothook.me`
-- Fallback (inactive until DNS exists): `https://bootstrap.a2a.fun`
-
-Notes:
-- Attempt primary first.
-- Only attempt fallback if fallback DNS resolves; otherwise treat fallback as inactive.
-- No discovery/mesh/routing is implemented in the frozen phases.
+- Remote execution transport (cross-node capability execution)
+- Distributed scheduling / routing
+- Agent orchestration
+- Capability marketplaces
+- Economic models
 
 ---
 
-## 10) Future directions
+# Contributing
 
-Possible future work (not implemented here):
-- discovery layer
-- distributed runtime
-- queue/retry infrastructure
-- extended protocol message types
-- transcript persistence
-- advanced handshake models
+Ways to help:
+
+- Create new example capabilities (handlers + capability primitives)
+- Run additional nodes and try the relay harness flows
+- Experiment with capability sharing flows (advertisement → discovery → reference)
+- Improve discovery mechanisms (still deterministic + bounded)
+
+---
+
+# Roadmap
+
+Possible future directions:
+
+- Remote capability execution
+- Distributed invocation routing
+- Agent cooperation models (multi-agent collaboration)
+- Capability marketplaces
+
+---
+
+# Project Status
+
+**Alpha — Protocol Baseline Complete**
+
+The project currently provides:
+
+- Agent Social Protocol (identity → Phase3 → friendship gating)
+- Capability Sharing (friendship-gated)
+- Minimal Execution Runtime (local handler execution + result adaptation)
+
+---
+
+# Philosophy
+
+Agents should become network participants.
+
+**identity**
+→ **relationship**
+→ **capability**
+→ **cooperation**
+
+This project is a **social layer for machine intelligence**: a deterministic baseline that future product layers can safely build on.
