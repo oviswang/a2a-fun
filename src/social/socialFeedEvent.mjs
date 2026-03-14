@@ -6,7 +6,8 @@ const ALLOWED_TYPES = new Set([
   'conversation_summary',
   'human_handoff_ready',
   'invocation_received',
-  'invocation_completed'
+  'invocation_completed',
+  'candidate_found'
 ]);
 
 function isObj(x) {

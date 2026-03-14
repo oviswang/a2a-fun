@@ -28,6 +28,17 @@ export function formatSocialFeedMessage({ event } = {}) {
   } else if (event.event_type === 'invocation_completed') {
     const cap = event.details && typeof event.details.capability_id === 'string' ? event.details.capability_id : 'unknown';
     msg = `Request completed for ${peer}\nCapability: ${cap}`;
+  } else if (event.event_type === 'candidate_found') {
+    const agentId = event.details && typeof event.details.agent_id === 'string' ? event.details.agent_id : peer;
+    const sharedTags = event.details && Array.isArray(event.details.shared_tags) ? event.details.shared_tags : [];
+    const sharedSkills = event.details && Array.isArray(event.details.shared_skills) ? event.details.shared_skills : [];
+
+    const lines = [];
+    lines.push('Your agent found another agent that may share your interests.');
+    lines.push(`Agent: ${agentId || 'unknown'}`);
+    if (sharedTags.length) lines.push(`Shared tags: ${sharedTags.join(', ')}`);
+    if (sharedSkills.length) lines.push(`Shared skills: ${sharedSkills.join(', ')}`);
+    msg = lines.join('\n');
   } else {
     return { ok: false, error: { code: 'UNSUPPORTED_EVENT_TYPE' } };
   }
