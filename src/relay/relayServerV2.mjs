@@ -119,6 +119,26 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
   // node_id -> latest session_id
   const latestByNode = new Map();
 
+  // In-memory bounded trace log (append order).
+  const traces = [];
+  const TRACE_CAP = 1000;
+
+  function pushTrace(t) {
+    traces.push(t);
+    if (traces.length > TRACE_CAP) traces.splice(0, traces.length - TRACE_CAP);
+  }
+
+  function trace({ event, trace_id = null, from = null, to = null, kind = null, ts = null } = {}) {
+    pushTrace({
+      event: String(event || 'unknown'),
+      trace_id: trace_id === null ? null : String(trace_id),
+      from: from === null ? null : String(from),
+      to: to === null ? null : String(to),
+      kind: kind === null ? null : String(kind),
+      ts: ts || nowIso()
+    });
+  }
+
   function log(event, fields = {}) {
     // Minimal, machine-safe structured logging.
     // No payload logging.
@@ -170,6 +190,13 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
       return;
     }
 
+    if (req.method === 'GET' && req.url === '/traces') {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ok: true, traces }));
+      return;
+    }
+
     res.statusCode = 404;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }));
@@ -211,6 +238,7 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
             entries.delete(k);
             recomputeLatest(reg.node_id);
             log('unregister', { node_id: reg.node_id, session_id: reg.session_id });
+            trace({ event: 'unregister', from: reg.node_id, to: null, trace_id: null, kind: null });
           }
         }
         reg = null;
@@ -276,12 +304,14 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
             latestByNode.set(node_id, session_id);
 
             log('register_ok', { node_id, session_id });
+            trace({ event: 'register', from: node_id, to: null, trace_id: null, kind: null });
             writeWsText(socket, { ok: true, type: 'registered', node_id, session_id });
             continue;
           }
 
           if (msg.type === 'relay') {
             if (!reg) {
+              trace({ event: 'dropped_invalid', trace_id: msg.trace_id ?? null, from: null, to: msg.to ?? null, kind: msg.payload?.kind ?? null });
               writeWsText(socket, { ok: false, error: { code: 'NOT_REGISTERED', reason: 'must register first' } });
               continue;
             }
@@ -293,26 +323,35 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
 
             const toRaw = typeof msg.to === 'string' ? msg.to.trim() : '';
             if (!toRaw) {
+              trace({ event: 'dropped_invalid', trace_id: msg.trace_id ?? null, from: reg.node_id, to: null, kind: msg.payload?.kind ?? null });
               writeWsText(socket, { ok: false, error: { code: 'INVALID_TO', reason: 'to required' } });
               continue;
             }
+
+            const trace_id = msg.trace_id ?? null;
+            const kind = msg.payload?.kind ?? null;
+
+            trace({ event: 'relay_received', trace_id, from: reg.node_id, to: toRaw, kind });
 
             // Minimal deterministic routing in v2 registration phase:
             // - to='node_id' routes to the latest session for that node_id.
             const toNode = toRaw;
             const toSession = latestByNode.get(toNode) || null;
             if (!toSession) {
+              trace({ event: 'dropped_no_target', trace_id, from: reg.node_id, to: toNode, kind });
               writeWsText(socket, { ok: true, type: 'dropped', to: toNode });
               continue;
             }
 
             const target = entries.get(regKey(toNode, toSession));
             if (!target || target.socket.destroyed) {
+              trace({ event: 'dropped_no_target', trace_id, from: reg.node_id, to: toNode, kind });
               writeWsText(socket, { ok: true, type: 'dropped', to: toNode });
               continue;
             }
 
             writeWsText(target.socket, { from: reg.node_id, payload: msg.payload ?? null });
+            trace({ event: 'forwarded', trace_id, from: reg.node_id, to: toNode, kind });
             writeWsText(socket, { ok: true, type: 'relayed', to: toNode });
             continue;
           }
