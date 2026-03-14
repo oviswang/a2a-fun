@@ -147,6 +147,10 @@ async function runMachineB({ relayUrl, nodeId = 'nodeB', to = 'nodeA' } = {}) {
 async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   if (!relayUrl) throw new Error('--relayUrl required');
 
+  // Track expected results (by invocation_id) so Machine A can wait deterministically.
+  const expectedById = new Map();
+  const receivedById = new Map();
+
   const client = createRelayClient({
     relayUrl,
     nodeId,
@@ -154,6 +158,26 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
       await handleRelayInbound(msg, {
         onInbound: async (payload) => {
           const out = handleRemoteInvocationResult({ payload });
+
+          if (payload?.kind === 'REMOTE_INVOCATION_RESULT' && out.ok === true) {
+            const testName = expectedById.get(out.invocation_id) || null;
+            receivedById.set(out.invocation_id, true);
+
+            console.log(
+              JSON.stringify({
+                ok: true,
+                role: 'machineA',
+                received_kind: 'REMOTE_INVOCATION_RESULT',
+                invocation_id: out.invocation_id,
+                invocation_ok: out.invocation_result?.ok ?? null,
+                invocation_error: out.invocation_result?.error ?? null,
+                test: testName
+              })
+            );
+            return { ok: true };
+          }
+
+          // Non-result or invalid result: keep logging machine-safely.
           console.log(
             JSON.stringify({
               ok: true,
@@ -180,6 +204,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
 
   // 1) Success path
   const invOk = makeInvocationRequest({ capability_id: 'cap_echo', payload: { msg: 'hi' } });
+  expectedById.set(invOk.invocation_id, 'success');
   const send1 = await sendRemoteInvocation({
     transport: executeTransport,
     peer: {
@@ -196,6 +221,7 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
 
   // 2) Unknown handler fail-closed
   const invMissing = makeInvocationRequest({ capability_id: 'cap_missing', payload: { msg: 'x' } });
+  expectedById.set(invMissing.invocation_id, 'unknown_handler');
   const send2 = await sendRemoteInvocation({
     transport: executeTransport,
     peer: {
@@ -210,20 +236,23 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
   });
   console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'unknown_handler', invocation_id: invMissing.invocation_id, transport_used: send2.transport_used }));
 
-  // 3) Invalid kind fail-closed
+  // 3) Invalid kind fail-closed (use a distinct invocation_id)
+  const invBadKind = makeInvocationRequest({ capability_id: 'cap_echo', payload: { msg: 'badkind' } });
+  expectedById.set(invBadKind.invocation_id, 'invalid_kind');
   const send3 = await executeTransport({
     peerUrl: unreachablePeerUrl,
-    payload: { kind: 'WRONG_KIND', invocation_request: invOk },
+    payload: { kind: 'WRONG_KIND', invocation_request: invBadKind },
     relayAvailable: true,
     timeoutMs: 150,
     relayUrl,
     nodeId,
     relayTo: to
   });
-  console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'invalid_kind', transport_used: send3.transport }));
+  console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'invalid_kind', invocation_id: invBadKind.invocation_id, transport_used: send3.transport }));
 
   // 4) Friendship gate fail-closed
   const invGate = makeInvocationRequest({ friendship_id: 'fr_other', capability_id: 'cap_echo', payload: { msg: 'gate' } });
+  expectedById.set(invGate.invocation_id, 'friendship_gate');
   const send4 = await sendRemoteInvocation({
     transport: executeTransport,
     peer: {
@@ -237,6 +266,26 @@ async function runMachineA({ relayUrl, nodeId = 'nodeA', to = 'nodeB' } = {}) {
     invocation_request: invGate
   });
   console.log(JSON.stringify({ ok: true, role: 'machineA', test: 'friendship_gate', invocation_id: invGate.invocation_id, transport_used: send4.transport_used }));
+
+  // Wait deterministically for all expected results or timeout.
+  const timeoutMs = 8000;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    if (receivedById.size >= expectedById.size) {
+      console.log(JSON.stringify({ ok: true, role: 'machineA', done: true, received: receivedById.size, expected: expectedById.size }));
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  const missing = [];
+  for (const [id, name] of expectedById.entries()) {
+    if (!receivedById.has(id)) missing.push({ test: name, invocation_id: id });
+  }
+  missing.sort((a, b) => String(a.test).localeCompare(String(b.test)));
+
+  console.log(JSON.stringify({ ok: false, role: 'machineA', timeoutMs, missing }));
 }
 
 async function main() {
