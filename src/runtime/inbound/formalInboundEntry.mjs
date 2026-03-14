@@ -17,6 +17,7 @@
 
 import { validateEnvelope } from '../../phase2/envelope/envelope.schema.mjs';
 import { applySessionProbeMessage } from '../../phase3/session/sessionStateTransition.mjs';
+import { createFriendshipCandidate } from '../../friendship/friendshipCandidate.mjs';
 
 function fail({ code, validated = null, session_id = null, session_found = null, processed = null } = {}) {
   return {
@@ -134,6 +135,16 @@ export async function formalInboundEntry(payload, { storage, protocolProcessor }
         local_entered: next.local_entered,
         remote_entered: next.remote_entered
       };
+
+      // Friendship Trigger Layer runtime primitive (candidate creation only).
+      // Trigger condition (minimal): Phase 3 reaches PROBING.
+      if (next.state === 'PROBING') {
+        response.friendship_candidate = createFriendshipCandidate({
+          session_id: next.session_id,
+          peer_actor_id: next.peer_actor_id,
+          phase3_state: next.state
+        });
+      }
     }
   } catch {
     return fail({ code: 'PROCESSOR_FAIL', validated: true, session_id, session_found, processed: false });
