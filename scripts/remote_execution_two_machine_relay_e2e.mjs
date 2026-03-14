@@ -14,7 +14,7 @@
  *
  * Usage (run on separate machines):
  *   node scripts/remote_execution_two_machine_relay_e2e.mjs relay --host 0.0.0.0 --port 18884
- *   node scripts/remote_execution_two_machine_relay_e2e.mjs b --relayUrl ws://<relay-host>:18884/relay --nodeId nodeB
+ *   node scripts/remote_execution_two_machine_relay_e2e.mjs b --relayUrl ws://<relay-host>:18884/relay --nodeId nodeB --to nodeA
  *   node scripts/remote_execution_two_machine_relay_e2e.mjs a --relayUrl ws://<relay-host>:18884/relay --nodeId nodeA --to nodeB
  */
 
@@ -71,7 +71,7 @@ function makeInvocationRequest({ friendship_id = 'fr_1', capability_id = 'cap_ec
   return createCapabilityInvocationRequest({ capability_reference, payload });
 }
 
-async function runMachineB({ relayUrl, nodeId = 'nodeB' } = {}) {
+async function runMachineB({ relayUrl, nodeId = 'nodeB', to = 'nodeA' } = {}) {
   if (!relayUrl) throw new Error('--relayUrl required');
 
   const friendship_record = { friendship_id: 'fr_1', established: true };
@@ -116,7 +116,7 @@ async function runMachineB({ relayUrl, nodeId = 'nodeB' } = {}) {
               relayAvailable: true,
               relayUrl,
               nodeId,
-              relayTo: msg.from
+              relayTo: to
             },
             invocation_result
           });
@@ -244,7 +244,7 @@ async function main() {
   const role = args._[0];
 
   if (role === 'relay') return runRelay({ host: args.host, port: args.port });
-  if (role === 'b') return runMachineB({ relayUrl: args.relayUrl, nodeId: args.nodeId });
+  if (role === 'b') return runMachineB({ relayUrl: args.relayUrl, nodeId: args.nodeId, to: args.to });
   if (role === 'a') return runMachineA({ relayUrl: args.relayUrl, nodeId: args.nodeId, to: args.to });
 
   throw new Error('usage: relay|a|b');

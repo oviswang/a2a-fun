@@ -29,7 +29,8 @@ On Machine B:
 ```bash
 node scripts/remote_execution_two_machine_relay_e2e.mjs b \
   --relayUrl ws://<relay-host>:18884/relay \
-  --nodeId nodeB
+  --nodeId nodeB \
+  --to nodeA
 ```
 
 Expected: JSON logs indicating `connected:true`.
