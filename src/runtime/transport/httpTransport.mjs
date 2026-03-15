@@ -13,6 +13,7 @@ import { buildAgentCardFromDocuments } from '../../discovery/agentCardBuilder.mj
 import { introspectLocalCapabilities } from '../../discovery/agentCapabilityIntrospector.mjs';
 import { publishAgentCardRemote, listPublishedAgentsRemote } from '../../discovery/sharedAgentDirectoryClient.mjs';
 import { resolveStableAgentIdentity } from '../../identity/stableIdentityRuntime.mjs';
+import { handleInterestDecision } from '../../social/agentInterestDecisionHandler.mjs';
 
 export function createHttpTransport() {
   const directory = createNetworkAgentDirectory();
@@ -275,6 +276,29 @@ export function createHttpTransport() {
           };
 
           res.statusCode = local_published ? 200 : 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(out));
+          return;
+        }
+
+        // Human decision endpoint (v0.1): interest prompt reply handling.
+        // Body: { peer_agent_id, text }
+        if (req.method === 'POST' && req.url === '/interest/reply') {
+          const raw = await readBody(req, 8 * 1024);
+          let json;
+          try { json = JSON.parse(raw); } catch {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'BAD_JSON' }));
+            return;
+          }
+
+          const peer_agent_id = json?.peer_agent_id;
+          const text = json?.text;
+          const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
+
+          const out = await handleInterestDecision({ workspace_path, peer_agent_id, text });
+          res.statusCode = out.ok ? 200 : 400;
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify(out));
           return;

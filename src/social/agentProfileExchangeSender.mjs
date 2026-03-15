@@ -4,7 +4,10 @@ import { createRelayClient } from '../runtime/transport/relayClient.mjs';
 import { createAgentProfileExchangeMessage, isAgentProfileExchangeMessage } from './agentProfileExchangeMessage.mjs';
 import { saveAgentProfileExchangeTranscript } from './agentProfileExchangeTranscript.mjs';
 import { markAgentEngaged } from '../memory/localAgentMemory.mjs';
-import { buildAgentInterestPrompt } from './agentInterestPrompt.mjs';
+import { buildInterestPromptMessage } from './agentInterestPrompt.mjs';
+import { registerPendingInterestPrompt } from './agentInterestDecisionHandler.mjs';
+import { resolveActiveGateway } from './gatewayResolver.mjs';
+import { deliverSocialFeedMessage } from './socialFeedDelivery.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -93,8 +96,19 @@ export async function sendAgentProfileExchange({ local_profile, remote_agent_id,
 
       await markAgentEngaged({ workspace_path: ws, peer_agent_id: toId, last_summary: String(got.payload.message || '') });
 
-      const ip = buildAgentInterestPrompt({ peer_agent_id: toId, peer_name: got.payload.name || '', last_summary: String(got.payload.message || '') });
-      if (ip.ok) console.log(JSON.stringify({ ok: true, event: 'AGENT_INTEREST_PROMPT', peer_agent_id: toId, text: ip.prompt.text }));
+      const ip = buildInterestPromptMessage({ peer_agent_id: toId, peer_name: got.payload.name || '', last_summary: String(got.payload.message || '') });
+      if (ip.ok) {
+        registerPendingInterestPrompt({ peer_agent_id: toId, last_summary: String(got.payload.message || '') });
+
+        // Send through the same active gateway abstraction as social feed (best-effort).
+        const ctx = globalThis.__A2A_SOCIAL_CONTEXT || null;
+        const sendFn = globalThis.__A2A_SOCIAL_SEND || null;
+        const gw = resolveActiveGateway({ context: ctx || {} });
+        if (gw.ok && typeof sendFn === 'function') {
+          await deliverSocialFeedMessage({ gateway: gw.gateway, channel_id: gw.channel_id, message: ip.prompt.text, send: sendFn });
+          console.log(JSON.stringify({ ok: true, event: 'AGENT_INTEREST_PROMPT_SENT', peer_agent_id: toId, gateway: gw.gateway, channel_id: gw.channel_id }));
+        }
+      }
     } catch {
       // ignore
     }

@@ -37,3 +37,26 @@ export function buildAgentInterestPrompt({ peer_agent_id, peer_name = '', last_s
     error: null
   };
 }
+
+// Gateway-friendly prompt message (numbered reply)
+export function buildInterestPromptMessage({ peer_agent_id, peer_name = '', last_summary = '' } = {}) {
+  const out = buildAgentInterestPrompt({ peer_agent_id, peer_name, last_summary });
+  if (!out.ok) return out;
+
+  const id = out.prompt.peer_agent_id;
+  const name = safe(peer_name) || id;
+  const summary = safe(last_summary);
+
+  const text = [
+    `You and agent ${name} completed a profile exchange.`,
+    '',
+    'Summary:',
+    summary || '(no summary)',
+    '',
+    'Reply:',
+    '1 → Interested',
+    '2 → Skip'
+  ].join('\n');
+
+  return { ok: true, prompt: { ...out.prompt, text }, error: null };
+}
