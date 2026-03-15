@@ -154,6 +154,16 @@ export async function runAgentSocialEngineLiveRun({
         console.log(JSON.stringify({ ok: true, event: 'ATTENTION_PEER_SELECTED', selected_peer_agent_id: sel.selected_peer_agent_id, reason: sel.reason, score: sel.score }));
         const exp = explainAttentionDecision({ snapshot: snapOut.snapshot, peerSelection: sel });
         if (exp.ok) console.log(JSON.stringify({ ok: true, event: 'ATTENTION_DECISION_EXPLAINED', text: exp.text }));
+
+        // Minimal AGENT_SOCIAL_PROTOCOL_V1: derive a conversation goal alongside existing flow.
+        const { buildConversationGoal } = await import('./buildConversationGoal.mjs');
+        const { explainConversationGoal } = await import('./explainConversationGoal.mjs');
+        const goalOut = buildConversationGoal({ attention_snapshot: snapOut.snapshot, selected_peer: sel, memory_gaps: snapOut.snapshot.memory_gaps || [] });
+        if (goalOut.ok) {
+          const goalExp = explainConversationGoal({ attention_snapshot: snapOut.snapshot, selected_peer: sel, goal: goalOut.goal });
+          // logs emitted by helpers; keep best-effort only
+          void goalExp;
+        }
       }
     }
   } catch {
