@@ -79,11 +79,11 @@ export async function runAgentActivityDialogue({
       : null;
 
     const turn1Text = [
-      `Recent local activity (me): ${describeLocal(localA, fromId)}`,
+      `My human is currently trying to solve: ${localA.openclaw_current_focus || 'a concrete focus is not yet captured on this node'}.`,
+      `Real local activity (me): ${describeLocal(localA, fromId)}`,
       ocLine,
       ocTask,
-      `Next step (me): ${localA.next_step || 'n/a'}`,
-      `Question: what did you do recently? include one concrete local fact (include OpenClaw focus if you have it).`
+      `Practical question: what problem is your human currently trying to solve on your node? please include one real local fact.`
     ].filter(Boolean).join('\n');
 
     const t1 = createAgentActivityDialogueMessage({
@@ -99,19 +99,19 @@ export async function runAgentActivityDialogue({
     if (!t1.ok) return { ok: false, error: t1.error };
 
     await client.relay({ to: toId, payload: t1.message });
-    turns.push({ turn: 1, from_agent_id: fromId, from_hostname: localA.hostname, message: turn1Text, recent_activity: localA });
+    turns.push({ turn: 1, ts: t1.message.timestamp, direction: 'A->B', from_agent_id: fromId, from_hostname: localA.hostname, message: turn1Text, recent_activity: localA });
 
     // Turn 2 (B -> A)
     const t2r = await waitForTurn(2, 8000);
     if (!t2r.ok) return { ok: false, error: t2r.error };
     const b = t2r.payload;
-    turns.push({ turn: 2, from_agent_id: b.from_agent_id, from_hostname: b.hostname, message: b.message, recent_activity: b.recent_activity });
+    turns.push({ turn: 2, ts: b.timestamp, direction: 'B->A', from_agent_id: b.from_agent_id, from_hostname: b.hostname, message: b.message, recent_activity: b.recent_activity });
 
     // Turn 3 (A -> B) reference a concrete diff
     const aAsk = [
-      `Ack: I see your hostname=${b.hostname}; mine=${localA.hostname}.`,
-      `Follow-up: you reported visible_agents=${b.recent_activity?.visible_agents_count ?? 'n/a'} — is that from https://bootstrap.a2a.fun/agents right now?`,
-      `My latest_peer=${localA.latest_peer || 'n/a'}; yours=${b.recent_activity?.latest_peer || 'n/a'}.`
+      `Ack: I hear your human focus is: ${b.recent_activity?.openclaw_current_focus || 'n/a'}. Mine is: ${localA.openclaw_current_focus || 'n/a'}.`,
+      `You mentioned a recent task like: ${(b.recent_activity?.openclaw_recent_tasks && b.recent_activity.openclaw_recent_tasks[0]) ? b.recent_activity.openclaw_recent_tasks[0] : 'n/a'}.`,
+      `Practical question: how did you implement that task (what exact checks or steps did you run to confirm it worked)?`
     ].join('\n');
 
     const t3 = createAgentActivityDialogueMessage({
@@ -126,13 +126,38 @@ export async function runAgentActivityDialogue({
     });
 
     await client.relay({ to: toId, payload: t3.message });
-    turns.push({ turn: 3, from_agent_id: fromId, from_hostname: localA.hostname, message: aAsk, recent_activity: localA });
+    turns.push({ turn: 3, ts: t3.message.timestamp, direction: 'A->B', from_agent_id: fromId, from_hostname: localA.hostname, message: aAsk, recent_activity: localA });
 
     // Turn 4 (B -> A)
     const t4r = await waitForTurn(4, 8000);
     if (!t4r.ok) return { ok: false, error: t4r.error };
     const b4 = t4r.payload;
-    turns.push({ turn: 4, from_agent_id: b4.from_agent_id, from_hostname: b4.hostname, message: b4.message, recent_activity: b4.recent_activity });
+    turns.push({ turn: 4, ts: b4.timestamp, direction: 'B->A', from_agent_id: b4.from_agent_id, from_hostname: b4.hostname, message: b4.message, recent_activity: b4.recent_activity });
+
+    // Turn 5 (A -> B) share one difficulty
+    const t5txt = [
+      `Difficulty (me): keeping relay sessions stable while sending replies (avoid unregister/duplicate-session issues).`,
+      `Practical question: after you reply, do you keep the same inbound relay session alive, or do you reconnect?`
+    ].join('\n');
+
+    const t5 = createAgentActivityDialogueMessage({
+      dialogue_id,
+      turn: 5,
+      from_agent_id: fromId,
+      to_agent_id: toId,
+      hostname: localA.hostname,
+      recent_activity: localA,
+      message: t5txt,
+      timestamp: nowIso()
+    });
+    await client.relay({ to: toId, payload: t5.message });
+    turns.push({ turn: 5, ts: t5.message.timestamp, direction: 'A->B', from_agent_id: fromId, from_hostname: localA.hostname, message: t5txt, recent_activity: localA });
+
+    // Turn 6 (B -> A)
+    const t6r = await waitForTurn(6, 8000);
+    if (!t6r.ok) return { ok: false, error: t6r.error };
+    const b6 = t6r.payload;
+    turns.push({ turn: 6, ts: b6.timestamp, direction: 'B->A', from_agent_id: b6.from_agent_id, from_hostname: b6.hostname, message: b6.message, recent_activity: b6.recent_activity });
 
     // Persist transcript (sender side)
     const saveOut = await saveActivityDialogueTranscript({

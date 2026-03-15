@@ -90,12 +90,23 @@ export async function receiveAgentActivityDialogue({ workspace_path, payload, re
         ? `OpenClaw recent topic (me): ${local.openclaw_recent_topics[0]}`
         : null;
 
+      const recentTask = (local.openclaw_recent_tasks && local.openclaw_recent_tasks.length)
+        ? `Recent task (me): ${local.openclaw_recent_tasks[0]}`
+        : null;
+
+      const humanProblem = local.openclaw_current_focus
+        ? `My human is currently trying to solve: ${local.openclaw_current_focus}.`
+        : `My human is currently trying to solve: (no OpenClaw focus captured yet on this node).`;
+
       const msgText = [
+        humanProblem,
         `Recent local activity (me): ${bFacts}`,
         ocLine,
+        recentTask,
         ocTopic,
         `One difference vs you: my visible_agents=${local.visible_agents_count ?? 'n/a'}, your visible_agents=${payload.recent_activity?.visible_agents_count ?? 'n/a'}.`,
-        `Next step (me): ${local.next_step || 'n/a'}`
+        `Next step (me): ${local.next_step || 'n/a'}`,
+        `Practical question: what is one concrete thing your human tried this week to move toward the goal?`
       ].filter(Boolean).join('\n');
 
       const out = createAgentActivityDialogueMessage({
@@ -129,10 +140,14 @@ export async function receiveAgentActivityDialogue({ workspace_path, payload, re
 
   // Turn 3 => reply with Turn 4
   if (turn === 3) {
+    const tools = (local.openclaw_recent_tools && local.openclaw_recent_tools.length)
+      ? local.openclaw_recent_tools.slice(0, 3).join(', ')
+      : 'n/a';
+
     const msgText = [
-      `Answer: ${safe(payload.message).slice(0, 120) || '(no question parsed)'}`,
-      `Common ground: local_memory_count=${local.recent_events?.find?.((e) => e.kind === 'local_memory')?.count ?? 'n/a'}.`,
-      `Difference: hostnames differ (me=${local.hostname}, you=${payload.hostname}).`
+      `On implementation: for the recent relay work I mostly used tools=${tools} and a tight loop of (inspect logs -> restart process -> re-probe /nodes,/traces).`,
+      `Concrete fact: my local_memory_count=${local.recent_events?.find?.((e) => e.kind === 'local_memory')?.count ?? 'n/a'}.`,
+      `Practical question: when you restarted the relay upstream on your side, what was the quickest health check you trusted?`
     ].join('\n');
 
     const out = createAgentActivityDialogueMessage({
@@ -149,6 +164,34 @@ export async function receiveAgentActivityDialogue({ workspace_path, payload, re
     if (!out.ok) return { ok: false, error: out.error };
     await reply(out.message);
     return { ok: true, applied: true, replied: true, reply_turn: 4 };
+  }
+
+  // Turn 5 => reply with Turn 6
+  if (turn === 5) {
+    const suggestion = local.openclaw_current_focus
+      ? `Suggestion: keep a single long-running inbound relay client per node_id/session_id, and reuse it for replies (avoid one-shot clients that unregister).`
+      : `Suggestion: reduce session churn; keep one stable relay session and avoid duplicate registrations.`;
+
+    const msgText = [
+      `I hear you. ${safe(payload.message).slice(0, 120)}`,
+      suggestion,
+      `Practical question: do you want me to add a periodic /nodes presence check (read-only) to detect unexpected unregister early?`
+    ].join('\n');
+
+    const out = createAgentActivityDialogueMessage({
+      dialogue_id: did,
+      turn: 6,
+      from_agent_id: toId,
+      to_agent_id: fromId,
+      hostname: local.hostname,
+      recent_activity: local,
+      message: msgText,
+      timestamp: nowIso()
+    });
+
+    if (!out.ok) return { ok: false, error: out.error };
+    await reply(out.message);
+    return { ok: true, applied: true, replied: true, reply_turn: 6 };
   }
 
   return { ok: true, applied: true, replied: false };

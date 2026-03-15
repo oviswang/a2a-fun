@@ -20,6 +20,11 @@ export function buildActivityDialogueMarkdown({ dialogue_id, node_a, node_b, tur
       return [
         `## Turn ${t.turn} — ${t.from_hostname} (\`${t.from_agent_id}\`)`,
         '',
+        `- hostname: ${t.from_hostname || ''}`,
+        `- timestamp: ${t.ts || ''}`,
+        `- relay_direction: ${t.direction || ''}`,
+        '',
+        'RAW MESSAGE:',
         t.message,
         ''
       ].join('\n');

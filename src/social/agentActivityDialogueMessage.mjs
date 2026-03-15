@@ -25,7 +25,7 @@ export function createAgentActivityDialogueMessage({
 
   const turnNum = Number(turn);
   if (!did) return { ok: false, error: { code: 'INVALID_DIALOGUE_ID' } };
-  if (!Number.isFinite(turnNum) || turnNum < 1 || turnNum > 4) return { ok: false, error: { code: 'INVALID_TURN' } };
+  if (!Number.isFinite(turnNum) || turnNum < 1 || turnNum > 6) return { ok: false, error: { code: 'INVALID_TURN' } };
   if (!fromId) return { ok: false, error: { code: 'INVALID_FROM' } };
   if (!toId) return { ok: false, error: { code: 'INVALID_TO' } };
   if (!host) return { ok: false, error: { code: 'INVALID_HOSTNAME' } };
