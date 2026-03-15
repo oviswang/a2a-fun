@@ -71,21 +71,39 @@ export NODE_ID="$(hostname)-$(openssl rand -hex 2)"
 export A2A_AGENT_ID=$NODE_ID
 export A2A_WORKSPACE_PATH=$(pwd)
 
-# Port conflict detection (fail-fast)
+# Clear prior local state markers (safe)
+rm -f .start_mode
+rm -f node.pid
+
+# Port conflict detection (smart reuse)
+# If $PORT is already occupied by a healthy a2a-fun node, reuse it.
+start_mode=fresh
 if command -v lsof >/dev/null 2>&1; then
   if lsof -i:"$PORT" >/dev/null 2>&1; then
-    echo "Port already in use: $PORT" >&2
-    exit 1
+    if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/status" | grep -q '"ok":true'; then
+      start_mode=reuse
+    else
+      echo "Port already in use and not a healthy a2a-fun node: $PORT" >&2
+      exit 1
+    fi
   fi
 elif command -v ss >/dev/null 2>&1; then
   if ss -ltn | grep -q ":$PORT "; then
-    echo "Port already in use: $PORT" >&2
-    exit 1
+    if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/status" | grep -q '"ok":true'; then
+      start_mode=reuse
+    else
+      echo "Port already in use and not a healthy a2a-fun node: $PORT" >&2
+      exit 1
+    fi
   fi
 fi
 
-PORT=$PORT node scripts/start-node.mjs > node.log 2>&1 &
-echo $! > node.pid
+echo "$start_mode" > .start_mode
+
+if [ "$start_mode" = "fresh" ]; then
+  PORT=$PORT node scripts/start-node.mjs > node.log 2>&1 &
+  echo $! > node.pid
+fi
 
 # Improve startup log visibility
 sleep 1
@@ -93,8 +111,13 @@ tail -n 10 node.log || true
 
 verify:
 
-test -s node.pid
-kill -0 $(cat node.pid)
+mode=$(cat .start_mode 2>/dev/null || echo fresh)
+if [ "$mode" = "reuse" ]; then
+  curl -fsS --max-time 3 "http://127.0.0.1:$PORT/status" | grep '"ok":true'
+else
+  test -s node.pid
+  kill -0 $(cat node.pid)
+fi
 
 next:
 STEP wait_node
@@ -178,7 +201,7 @@ set -e
 
 # publish-self reliability (retry up to 5x)
 for i in {1..5}; do
-  if curl -fsS -X POST http://127.0.0.1:$PORT/agents/publish-self >/dev/null; then
+  if curl -fsS -X POST "http://127.0.0.1:$PORT/agents/publish-self" > publish-self.json; then
     break
   fi
   sleep 1
@@ -192,7 +215,13 @@ done
 
 verify:
 
-curl -fsS http://127.0.0.1:$PORT/agents | grep "$NODE_ID"
+# Layer 1: prefer publish-self response
+if [ -f publish-self.json ] && grep -q '"remote_published":true' publish-self.json; then
+  exit 0
+fi
+
+# Layer 2: fallback to directory visibility
+curl -fsS https://bootstrap.a2a.fun/agents | grep "$NODE_ID"
 
 next:
 STEP verify_relay
@@ -205,26 +234,25 @@ run:
 
 set -e
 
-# Relay registration verification (bootstrap relay upstream)
-# Note: relay /nodes is HTTP on the bootstrap host.
-relay_nodes_url="https://bootstrap.a2a.fun/nodes"
+# Relay visibility verification via shared directory (/agents)
+agents_url="https://bootstrap.a2a.fun/agents"
 
 for i in {1..10}; do
-  if curl -fsS --max-time 3 "$relay_nodes_url" | grep -q "$NODE_ID"; then
+  if curl -fsS --max-time 3 "$agents_url" | grep -q "$NODE_ID"; then
     break
   fi
-  echo "waiting for relay registration ($i/10)" >&2
+  echo "waiting for directory visibility ($i/10)" >&2
   sleep 1
   if [ -f node.log ]; then tail -n 5 node.log || true; fi
   if [ "$i" -eq 10 ]; then
-    echo "relay registration not visible for NODE_ID=$NODE_ID" >&2
+    echo "directory does not show NODE_ID=$NODE_ID" >&2
     exit 1
   fi
 done
 
 verify:
 
-curl -fsS --max-time 3 "$relay_nodes_url" | grep "$NODE_ID"
+curl -fsS --max-time 3 "$agents_url" | grep "$NODE_ID"
 
 next:
 DONE
