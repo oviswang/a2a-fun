@@ -40,14 +40,18 @@ const principalCtx = {
 const stable = resolveStableAgentIdentity({ context: principalCtx, agent_slug: 'default' });
 const local_agent_id = stable.ok && stable.stable_agent_id ? stable.stable_agent_id : legacy_agent_id;
 
-const listOut = await listPublishedAgentsRemote({ base_url });
-if (!listOut.ok) {
-  emit({ ok: false, base_url, local_agent_id, error: listOut.error || { code: 'LIST_FAILED' } });
-  process.exit(1);
+let old_card_present = false;
+try {
+  const listOut = await listPublishedAgentsRemote({ base_url });
+  if (listOut.ok) {
+    const agents = Array.isArray(listOut.agents) ? listOut.agents : [];
+    old_card_present = agents.some((a) => a && a.agent_id === local_agent_id);
+  } else {
+    emit({ ok: true, event: 'DIRECTORY_UNAVAILABLE_FALLBACK', base_url, local_agent_id, error: listOut.error || { code: 'LIST_FAILED' } });
+  }
+} catch (e) {
+  emit({ ok: true, event: 'DIRECTORY_UNAVAILABLE_FALLBACK', base_url, local_agent_id, error: { code: 'LIST_FAILED' } });
 }
-
-const agents = Array.isArray(listOut.agents) ? listOut.agents : [];
-const old_card_present = agents.some((a) => a && a.agent_id === local_agent_id);
 
 // Build enriched card
 const docsOut = await extractAgentDiscoveryDocuments({ workspace_path });
