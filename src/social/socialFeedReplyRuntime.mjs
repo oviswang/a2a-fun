@@ -5,6 +5,7 @@ import {
   shouldEstablishFriendship
 } from './socialHandoffState.mjs';
 import { createTrustEdge } from './socialTrustEdge.mjs';
+import { markFriendshipEstablished, incrementLocalTrust } from '../memory/localAgentMemory.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -34,8 +35,22 @@ export function applySocialFeedReply({ text, handoff_state, local_agent_id, remo
   }
 
   const edge = createTrustEdge({ local_agent_id, remote_agent_id, established_at: nowIso() });
+
+  // Best-effort local memory updates.
+  try {
+    await markFriendshipEstablished({ workspace_path: process.env.A2A_WORKSPACE_PATH || process.cwd(), peer_agent_id: remote_agent_id });
+  } catch {
+    // ignore
+  }
+
   if (!edge.ok) {
     return { ok: true, action: parsed.action, handoff_state: next.handoff_state, friendship_established: true, trust_edge: null };
+  }
+
+  try {
+    await incrementLocalTrust({ workspace_path: process.env.A2A_WORKSPACE_PATH || process.cwd(), peer_agent_id: remote_agent_id, delta: 1 });
+  } catch {
+    // ignore
   }
 
   return { ok: true, action: parsed.action, handoff_state: next.handoff_state, friendship_established: true, trust_edge: edge };

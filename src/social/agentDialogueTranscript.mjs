@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { isAgentDialogueMessage } from './agentDialogueMessage.mjs';
+import { markAgentEngaged } from '../memory/localAgentMemory.mjs';
 
 function isObj(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
@@ -59,6 +60,15 @@ export async function saveAgentDialogueTranscript({ workspace_path, dialogue_id,
 
   await fs.writeFile(jsonPath, JSON.stringify(payload, null, 2));
   await fs.writeFile(mdPath, toMd({ dialogue_id, topic, agentA, agentB, messages }));
+
+  // Best-effort local memory: mark the remote peer as engaged.
+  try {
+    const last = messages[messages.length - 1];
+    const last_summary = last && typeof last.message === 'string' ? last.message : '';
+    await markAgentEngaged({ workspace_path: base, peer_agent_id: agentB.agent_id, last_summary });
+  } catch {
+    // best-effort only
+  }
 
   return { ok: true, paths: { json: jsonPath, md: mdPath }, error: null };
 }

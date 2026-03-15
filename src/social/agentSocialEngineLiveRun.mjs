@@ -9,6 +9,7 @@ import { createAgentSocialState, shouldContactCandidate, markContacted } from '.
 
 import { bestEffortEmitSocialFeed } from './socialFeedRuntimeHook.mjs';
 import { resolveStableAgentIdentity } from '../identity/stableIdentityRuntime.mjs';
+import { upsertDiscoveredAgent } from '../memory/localAgentMemory.mjs';
 
 function fail(code) {
   return {
@@ -122,7 +123,21 @@ export async function runAgentSocialEngineLiveRun({
     };
   }
 
-  // 5) emit one candidate_found event (best-effort)
+  // 5) local memory update (best-effort)
+  try {
+    const card = byId.get(top.agent_id);
+    await upsertDiscoveredAgent({
+      workspace_path,
+      peer_agent_id: top.agent_id,
+      display_name: typeof card?.name === 'string' ? card.name : '',
+      summary: typeof card?.summary === 'string' ? card.summary : '',
+      source: { type: 'directory', base_url }
+    });
+  } catch {
+    // best-effort only
+  }
+
+  // 6) emit one candidate_found event (best-effort)
   await bestEffortEmitSocialFeed({
     event_type: 'candidate_found',
     peer_agent_id: top.agent_id,
