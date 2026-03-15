@@ -103,8 +103,12 @@ if (envBool('ENABLE_RELAY_INBOUND', false)) {
     registrationMode: 'v2',
     sessionId: `sess:${nodeId}`,
     onForward: ({ from, payload }) => {
-      // best-effort: do not crash the node on handler errors
-      handleForward({ from, payload }).catch(() => {});
+      // best-effort: do not crash the node on handler errors, but DO log them.
+      handleForward({ from, payload }).catch((err) => {
+        try {
+          console.log(JSON.stringify({ ok: false, event: 'RELAY_INBOUND_HANDLER_ERROR', from, kind: payload?.kind || null, error: String(err?.message || err) }));
+        } catch {}
+      });
     }
   });
 

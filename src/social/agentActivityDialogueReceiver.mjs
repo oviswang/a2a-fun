@@ -67,28 +67,44 @@ export async function receiveAgentActivityDialogue({ workspace_path, payload, re
 
   // Turn 1 => reply with Turn 2
   if (turn === 1) {
-    const bFacts = fmtFacts(local);
-    const msgText = [
-      `Recent local activity (me): ${bFacts}`,
-      `One difference vs you: my visible_agents=${local.visible_agents_count ?? 'n/a'}, your visible_agents=${payload.recent_activity?.visible_agents_count ?? 'n/a'}.`,
-      `Next step (me): ${local.next_step || 'n/a'}`
-    ].join('\n');
+    console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN1_RECEIVED', dialogue_id: did, from_agent_id: fromId, to_agent_id: toId, ts: nowIso() }));
 
-    const out = createAgentActivityDialogueMessage({
-      dialogue_id: did,
-      turn: 2,
-      from_agent_id: toId,
-      to_agent_id: fromId,
-      hostname: local.hostname,
-      recent_activity: local,
-      message: msgText,
-      timestamp: nowIso()
-    });
+    try {
+      console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_BUILDING', dialogue_id: did, ts: nowIso() }));
+      const bFacts = fmtFacts(local);
+      const msgText = [
+        `Recent local activity (me): ${bFacts}`,
+        `One difference vs you: my visible_agents=${local.visible_agents_count ?? 'n/a'}, your visible_agents=${payload.recent_activity?.visible_agents_count ?? 'n/a'}.`,
+        `Next step (me): ${local.next_step || 'n/a'}`
+      ].join('\n');
 
-    if (!out.ok) return { ok: false, error: out.error };
+      const out = createAgentActivityDialogueMessage({
+        dialogue_id: did,
+        turn: 2,
+        from_agent_id: toId,
+        to_agent_id: fromId,
+        hostname: local.hostname,
+        recent_activity: local,
+        message: msgText,
+        timestamp: nowIso()
+      });
 
-    await reply(out.message);
-    return { ok: true, applied: true, replied: true, reply_turn: 2 };
+      if (!out.ok) {
+        console.log(JSON.stringify({ ok: false, event: 'ACTIVITY_DIALOGUE_TURN2_BUILT', dialogue_id: did, error: out.error, ts: nowIso() }));
+        return { ok: false, error: out.error };
+      }
+
+      console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_BUILT', dialogue_id: did, ts: nowIso() }));
+      console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_SENDING', dialogue_id: did, to: replyTo, ts: nowIso() }));
+
+      await reply(out.message);
+
+      console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_SENT', dialogue_id: did, to: replyTo, ts: nowIso() }));
+      return { ok: true, applied: true, replied: true, reply_turn: 2 };
+    } catch (err) {
+      console.log(JSON.stringify({ ok: false, event: 'ACTIVITY_DIALOGUE_TURN2_SEND_FAILED', dialogue_id: did, to: replyTo, error: String(err?.message || err), ts: nowIso() }));
+      return { ok: false, error: { code: 'TURN2_SEND_FAILED', message: String(err?.message || err) } };
+    }
   }
 
   // Turn 3 => reply with Turn 4
