@@ -13,6 +13,9 @@ import { upsertDiscoveredAgent, loadLocalAgentMemory, saveLocalAgentMemory, upse
 import { sendAgentHandshake } from './agentHandshakeSender.mjs';
 import { buildAgentCurrentProfile } from './agentCurrentProfile.mjs';
 import { sendAgentProfileExchange } from './agentProfileExchangeSender.mjs';
+import { buildAttentionSnapshot } from '../attention/buildAttentionSnapshot.mjs';
+import { selectRelevantPeer } from '../attention/selectRelevantPeer.mjs';
+import { explainAttentionDecision } from '../attention/explainAttentionDecision.mjs';
 
 function fail(code) {
   return {
@@ -136,6 +139,23 @@ export async function runAgentSocialEngineLiveRun({
       summary: typeof card?.summary === 'string' ? card.summary : '',
       source: { type: 'directory', base_url }
     });
+  } catch {
+    // best-effort only
+  }
+
+  // 5b) attention-based selection helper (v0.1, additive; does not change current candidate_found behavior)
+  try {
+    const snapOut = await buildAttentionSnapshot({ workspace_path, agent_id: localCardOut.agent_card.agent_id });
+    if (snapOut.ok) {
+      const file_path = getDefaultLocalAgentMemoryPath({ workspace_path });
+      const loaded = await loadLocalAgentMemory({ file_path });
+      const sel = selectRelevantPeer({ snapshot: snapOut.snapshot, local_memory: loaded.ok ? loaded : { records: [] }, candidates: candidateCards });
+      if (sel.ok) {
+        console.log(JSON.stringify({ ok: true, event: 'ATTENTION_PEER_SELECTED', selected_peer_agent_id: sel.selected_peer_agent_id, reason: sel.reason, score: sel.score }));
+        const exp = explainAttentionDecision({ snapshot: snapOut.snapshot, peerSelection: sel });
+        if (exp.ok) console.log(JSON.stringify({ ok: true, event: 'ATTENTION_DECISION_EXPLAINED', text: exp.text }));
+      }
+    }
   } catch {
     // best-effort only
   }
