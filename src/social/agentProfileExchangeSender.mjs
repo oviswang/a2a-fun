@@ -97,7 +97,8 @@ export async function sendAgentProfileExchange({ local_profile, remote_agent_id,
       await markAgentEngaged({ workspace_path: ws, peer_agent_id: toId, last_summary: String(got.payload.message || '') });
 
       const ip = buildInterestPromptMessage({ peer_agent_id: toId, peer_name: got.payload.name || '', last_summary: String(got.payload.message || '') });
-      if (ip.ok) {
+      const enabled = String(process.env.ENABLE_AGENT_SOCIAL_GATEWAY || '').toLowerCase() === 'true';
+      if (enabled && ip.ok) {
         registerPendingInterestPrompt({ peer_agent_id: toId, last_summary: String(got.payload.message || '') });
 
         // Send through the same active gateway abstraction as social feed (best-effort).
@@ -108,6 +109,8 @@ export async function sendAgentProfileExchange({ local_profile, remote_agent_id,
           await deliverSocialFeedMessage({ gateway: gw.gateway, channel_id: gw.channel_id, message: ip.prompt.text, send: sendFn });
           console.log(JSON.stringify({ ok: true, event: 'AGENT_INTEREST_PROMPT_SENT', peer_agent_id: toId, gateway: gw.gateway, channel_id: gw.channel_id }));
         }
+      } else if (ip.ok) {
+        console.log(JSON.stringify({ ok: true, event: 'AGENT_INTEREST_PROMPT_EXPERIMENTAL_DISABLED', peer_agent_id: toId }));
       }
     } catch {
       // ignore

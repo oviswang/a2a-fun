@@ -281,9 +281,17 @@ export function createHttpTransport() {
           return;
         }
 
-        // Human decision endpoint (v0.1): interest prompt reply handling.
+        // Human decision endpoint (v0.1, EXPERIMENTAL): interest prompt reply handling.
+        // Guarded behind ENABLE_AGENT_SOCIAL_GATEWAY=true.
         // Body: { peer_agent_id, text }
         if (req.method === 'POST' && req.url === '/interest/reply') {
+          const enabled = String(process.env.ENABLE_AGENT_SOCIAL_GATEWAY || '').toLowerCase() === 'true';
+          if (!enabled) {
+            res.statusCode = 404;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }));
+            return;
+          }
           const raw = await readBody(req, 8 * 1024);
           let json;
           try { json = JSON.parse(raw); } catch {
@@ -322,8 +330,16 @@ export function createHttpTransport() {
           return;
         }
 
-        // Optional human inbound mapping (v0.1): if body contains {text:"1"|"2"} treat it as an interest decision.
+        // Optional human inbound mapping (v0.1, EXPERIMENTAL): if body contains {text:"1"|"2"} treat it as an interest decision.
+        // Guarded behind ENABLE_AGENT_SOCIAL_GATEWAY=true.
         if (typeof json?.text === 'string' && !json?.envelope) {
+          const enabled = String(process.env.ENABLE_AGENT_SOCIAL_GATEWAY || '').toLowerCase() === 'true';
+          if (!enabled) {
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: { code: 'EXPERIMENTAL_DISABLED' } }));
+            return;
+          }
           const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
           console.log(JSON.stringify({ ok: true, event: 'AGENT_INTEREST_REPLY_RECEIVED', text: String(json.text).trim() }));
           const dec = await handleInterestDecision({ workspace_path, peer_agent_id: json?.peer_agent_id, text: json.text });

@@ -1,5 +1,7 @@
 # INTEREST_PROMPT_GATEWAY_WIRING_V0_1
 
+> Status: **EXPERIMENTAL** (non-default). Guarded behind `ENABLE_AGENT_SOCIAL_GATEWAY=true`.
+
 ## Flow
 
 1) Profile exchange reply received (sender-side)
@@ -39,6 +41,11 @@ Cleared after a decision.
 - Reply `2`:
   - logs `AGENT_INTEREST_SKIPPED`
   - memory remains `engaged`
+
+## Experimental flag
+
+- Default/stable behavior: no gateway inbound forwarding, no numbered interest prompt flow.
+- Experimental behavior (enabled): set `ENABLE_AGENT_SOCIAL_GATEWAY=true` in the node process environment.
 
 ## Minimal HTTP integration (v0.1)
 
