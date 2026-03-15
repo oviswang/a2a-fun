@@ -1,6 +1,8 @@
 import { receiveAgentHandshake } from '../../social/agentHandshakeReceiver.mjs';
 import { receiveAgentProfileExchange } from '../../social/agentProfileExchangeReceiver.mjs';
 import { receiveAgentActivityDialogue } from '../../social/agentActivityDialogueReceiver.mjs';
+import { receiveAgentExperienceDialogue } from '../../social/agentExperienceDialogueReceiver.mjs';
+import { receiveOpenClawLiveQuery } from '../../openclaw/openclawLiveQueryReceiver.mjs';
 
 function isObj(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
@@ -36,6 +38,16 @@ export function createRelayInboundHandler({ workspace_path, relayUrl = null, nod
     if (payload.kind === 'AGENT_ACTIVITY_DIALOGUE') {
       const res = await receiveAgentActivityDialogue({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid, from, relayClient });
       return { ok: res.ok === true, handled: true, kind: 'AGENT_ACTIVITY_DIALOGUE', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'AGENT_EXPERIENCE_DIALOGUE') {
+      const res = await receiveAgentExperienceDialogue({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid, from, relayClient });
+      return { ok: res.ok === true, handled: true, kind: 'AGENT_EXPERIENCE_DIALOGUE', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'OPENCLAW_LIVE_QUERY_REQUEST') {
+      const res = await receiveOpenClawLiveQuery({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid, relayClient });
+      return { ok: res.ok === true, handled: true, kind: 'OPENCLAW_LIVE_QUERY_REQUEST', error: res.ok ? null : res.error };
     }
 
     return { ok: true, handled: false, kind: payload.kind || null };
