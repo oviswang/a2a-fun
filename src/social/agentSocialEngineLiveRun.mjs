@@ -9,7 +9,8 @@ import { createAgentSocialState, shouldContactCandidate, markContacted } from '.
 
 import { bestEffortEmitSocialFeed } from './socialFeedRuntimeHook.mjs';
 import { resolveStableAgentIdentity } from '../identity/stableIdentityRuntime.mjs';
-import { upsertDiscoveredAgent } from '../memory/localAgentMemory.mjs';
+import { upsertDiscoveredAgent, loadLocalAgentMemory, saveLocalAgentMemory, upsertLocalAgentMemoryRecord, getDefaultLocalAgentMemoryPath } from '../memory/localAgentMemory.mjs';
+import { sendAgentHandshake } from './agentHandshakeSender.mjs';
 
 function fail(code) {
   return {
@@ -137,7 +138,40 @@ export async function runAgentSocialEngineLiveRun({
     // best-effort only
   }
 
-  // 6) emit one candidate_found event (best-effort)
+  // 6) automatic handshake (best-effort)
+  try {
+    const file_path = getDefaultLocalAgentMemoryPath({ workspace_path });
+    const loaded = await loadLocalAgentMemory({ file_path });
+    if (loaded.ok) {
+      const rec = loaded.records.find((r) => (r?.stable_agent_id && r.stable_agent_id === top.agent_id) || (r?.legacy_agent_id && r.legacy_agent_id === top.agent_id)) || null;
+      const state = rec?.relationship_state;
+      const last_handshake_at = rec?.last_handshake_at || null;
+      if (state === 'discovered' && !last_handshake_at) {
+        const relayUrl = process.env.RELAY_URL || 'wss://bootstrap.a2a.fun/relay';
+        const hs = await sendAgentHandshake({
+          local_agent: localCardOut.agent_card,
+          remote_agent: { agent_id: top.agent_id },
+          relayUrl
+        });
+        if (hs.ok && hs.handshake) {
+          const up = upsertLocalAgentMemoryRecord({
+            records: loaded.records,
+            patch: {
+              stable_agent_id: top.agent_id.startsWith('aid:sha256:') ? top.agent_id : null,
+              legacy_agent_id: top.agent_id.startsWith('aid:sha256:') ? null : top.agent_id,
+              relationship_state: 'introduced',
+              last_handshake_at: hs.handshake.timestamp
+            }
+          });
+          if (up.ok) await saveLocalAgentMemory({ file_path, records: up.records });
+        }
+      }
+    }
+  } catch {
+    // best-effort only
+  }
+
+  // 7) emit one candidate_found event (best-effort)
   await bestEffortEmitSocialFeed({
     event_type: 'candidate_found',
     peer_agent_id: top.agent_id,
