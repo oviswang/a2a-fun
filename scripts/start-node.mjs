@@ -110,7 +110,7 @@ if (envBool('ENABLE_RELAY_INBOUND', false)) {
 
   relayClient.connect().then(
     () => console.log(JSON.stringify({ ok: true, event: 'RELAY_INBOUND_CONNECTED', relayUrl, nodeId })),
-    () => console.log(JSON.stringify({ ok: false, event: 'RELAY_INBOUND_CONNECT_FAILED', relayUrl, nodeId }))
+    (err) => console.log(JSON.stringify({ ok: false, event: 'RELAY_INBOUND_CONNECT_FAILED', relayUrl, nodeId, error: String(err?.message || err) }))
   );
 }
 
