@@ -53,10 +53,13 @@ export async function receiveAgentActivityDialogue({ workspace_path, payload, re
   async function reply(payloadToSend) {
     if (!ru) throw new Error('MISSING_RELAY_URL');
     const client = await createRelayClient({ relayUrl: ru, nodeId: nid, registrationMode: 'v2', sessionId: `sess:${nid}`, onForward: () => {} });
-    const c = await client.connect();
-    if (!c.ok) throw new Error('RELAY_CONNECT_FAILED');
     try {
+      await client.connect();
       await client.relay({ to: replyTo, payload: payloadToSend });
+      console.log(JSON.stringify({ ok: true, event: 'AGENT_ACTIVITY_DIALOGUE_REPLIED', dialogue_id: did, to: replyTo, turn: payloadToSend?.turn, ts: nowIso() }));
+    } catch (err) {
+      console.log(JSON.stringify({ ok: false, event: 'AGENT_ACTIVITY_DIALOGUE_REPLY_FAILED', dialogue_id: did, to: replyTo, error: String(err?.message || err), ts: nowIso() }));
+      throw err;
     } finally {
       await client.close().catch(() => {});
     }
