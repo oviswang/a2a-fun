@@ -19,7 +19,7 @@ test('interest gateway decision: reply 1 => interested', async () => {
   await saveLocalAgentMemory({ file_path, records: up.records });
 
   registerPendingInterestPrompt({ peer_agent_id: 'peer1', last_summary: 'x' });
-  const out = await handleInterestDecision({ workspace_path: ws, peer_agent_id: 'peer1', text: '1' });
+  const out = await handleInterestDecision({ workspace_path: ws, peer_agent_id: null, text: '1' });
   assert.equal(out.ok, true);
   assert.equal(out.decision, 'interested');
 

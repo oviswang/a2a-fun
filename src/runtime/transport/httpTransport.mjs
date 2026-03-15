@@ -322,6 +322,19 @@ export function createHttpTransport() {
           return;
         }
 
+        // Optional human inbound mapping (v0.1): if body contains {text:"1"|"2"} treat it as an interest decision.
+        if (typeof json?.text === 'string' && !json?.envelope) {
+          const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
+          console.log(JSON.stringify({ ok: true, event: 'AGENT_INTEREST_REPLY_RECEIVED', text: String(json.text).trim() }));
+          const dec = await handleInterestDecision({ workspace_path, peer_agent_id: json?.peer_agent_id, text: json.text });
+          if (dec.ok) console.log(JSON.stringify({ ok: true, event: 'AGENT_INTEREST_REPLY_APPLIED', decision: dec.decision }));
+
+          res.statusCode = dec.ok ? 200 : 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(dec));
+          return;
+        }
+
         const out = await onMessage({ envelope: json.envelope, raw: json });
 
         res.statusCode = 200;

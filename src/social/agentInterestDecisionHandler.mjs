@@ -39,8 +39,16 @@ export function clearPendingInterestPrompt({ peer_agent_id } = {}) {
  * - "2" => skip
  */
 export async function handleInterestDecision({ workspace_path, peer_agent_id, text } = {}) {
-  const id = safe(peer_agent_id);
-  if (!id) return { ok: false, error: { code: 'INVALID_PEER_AGENT_ID' } };
+  let id = safe(peer_agent_id);
+
+  // If peer_agent_id omitted, allow the single-pending-prompt fast path (v0.1).
+  if (!id) {
+    if (pendingInterestPrompts.size === 1) {
+      id = [...pendingInterestPrompts.keys()][0];
+    } else {
+      return { ok: false, error: { code: 'INVALID_PEER_AGENT_ID' } };
+    }
+  }
 
   if (!pendingInterestPrompts.has(id)) {
     return { ok: false, error: { code: 'NO_PENDING_PROMPT' } };
