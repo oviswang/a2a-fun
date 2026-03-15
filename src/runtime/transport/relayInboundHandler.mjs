@@ -1,5 +1,6 @@
 import { receiveAgentHandshake } from '../../social/agentHandshakeReceiver.mjs';
 import { receiveAgentProfileExchange } from '../../social/agentProfileExchangeReceiver.mjs';
+import { receiveAgentActivityDialogue } from '../../social/agentActivityDialogueReceiver.mjs';
 
 function isObj(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
@@ -30,6 +31,11 @@ export function createRelayInboundHandler({ workspace_path, relayUrl = null, nod
     if (payload.kind === 'AGENT_PROFILE_EXCHANGE') {
       const res = await receiveAgentProfileExchange({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid });
       return { ok: res.ok === true, handled: true, kind: 'AGENT_PROFILE_EXCHANGE', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'AGENT_ACTIVITY_DIALOGUE') {
+      const res = await receiveAgentActivityDialogue({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid, from });
+      return { ok: res.ok === true, handled: true, kind: 'AGENT_ACTIVITY_DIALOGUE', error: res.ok ? null : res.error };
     }
 
     return { ok: true, handled: false, kind: payload.kind || null };
