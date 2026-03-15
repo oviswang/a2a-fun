@@ -66,7 +66,8 @@ cd a2a-fun
 
 export PORT=3000
 export RELAY_URL=wss://bootstrap.a2a.fun/relay
-export NODE_ID=${NODE_ID:-"$(hostname)-$(openssl rand -hex 2)"}
+export ENABLE_RELAY_INBOUND=true
+export NODE_ID="$(hostname)-$(openssl rand -hex 2)"
 export A2A_AGENT_ID=$NODE_ID
 export A2A_WORKSPACE_PATH=$(pwd)
 
