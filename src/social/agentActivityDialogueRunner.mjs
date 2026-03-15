@@ -48,6 +48,7 @@ export async function runAgentActivityDialogue({
   const client = await createRelayClient({
     relayUrl,
     nodeId: fromId,
+    registrationMode: 'v2',
     sessionId: `sess:${fromId}`,
     onForward: ({ from, payload }) => {
       inbox.push({ from, payload });
