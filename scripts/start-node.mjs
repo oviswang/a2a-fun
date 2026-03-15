@@ -49,7 +49,7 @@ const auditBinder = null;
 
 const transport = createHttpTransport();
 
-const BOOTSTRAP_PRIMARY = process.env.BOOTSTRAP_PRIMARY || 'https://gw.bothook.me';
+const BOOTSTRAP_PRIMARY = process.env.BOOTSTRAP_PRIMARY || 'https://bootstrap.a2a.fun';
 const BOOTSTRAP_FALLBACK = process.env.BOOTSTRAP_FALLBACK || 'https://bootstrap.a2a.fun';
 
 const runtimeOptions = {

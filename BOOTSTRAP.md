@@ -2,7 +2,7 @@
 
 This repository includes bootstrap endpoint configuration variables for future expansion.
 
-- `BOOTSTRAP_PRIMARY` (default: https://gw.bothook.me) — **active**
+- `BOOTSTRAP_PRIMARY` (default: https://bootstrap.a2a.fun) — **active**
 - `BOOTSTRAP_FALLBACK` (default: https://bootstrap.a2a.fun) — **inactive until DNS resolves**
 
 Connection strategy (explicit failover; NOT discovery):

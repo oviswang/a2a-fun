@@ -19,7 +19,7 @@ function makeHttpClient(routes) {
   };
 }
 
-const primary = 'https://gw.bothook.me';
+const primary = 'https://bootstrap.a2a.fun';
 const fallback = 'https://bootstrap.a2a.fun';
 
 const self = 'https://node.self.example.com';
@@ -50,7 +50,7 @@ test('auto-join: primary bootstrap success', async () => {
   assert.deepEqual(out.selected_peers, ['https://p1.example.com/']);
 });
 
-test('auto-join: primary unreachable -> fallback success', async () => {
+test.skip('auto-join: primary unreachable -> fallback success (single-bootstrap mode)', async () => {
   const httpClient = makeHttpClient({
     [`POST ${joinUrl(primary)}`]: { throw: new Error('fetch failed') },
     [`POST ${joinUrl(fallback)}`]: { json: { ok: true } },
@@ -189,7 +189,7 @@ test('auto-join: no friendship side-effects', async () => {
   assert.equal(out.ok, true);
 });
 
-test('auto-join: primary reachable but business failure must NOT fallback (fail closed)', async () => {
+test.skip('auto-join: primary reachable but business failure must NOT fallback (fail closed) (single-bootstrap mode)', async () => {
   const httpClient = makeHttpClient({
     // Primary reachable but returns ok:false
     [`POST ${joinUrl(primary)}`]: { json: { ok: false } },

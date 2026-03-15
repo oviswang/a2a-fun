@@ -36,7 +36,7 @@ Node A ──WS(outbound)──► Relay ◄──WS(outbound)── Node B
 ```
 
 Relay endpoint (deployment target):
-- `wss://gw.bothook.me/relay`
+- `wss://bootstrap.a2a.fun/relay`
 
 ---
 

@@ -101,7 +101,7 @@ Proven boundary (v1 baseline):
 - Invalid input failed closed before processor invocation.
 
 Components:
-- Bootstrap server (`gw.bothook.me`): `/join`, `/peers` (candidate peer source; no trust)
+- Bootstrap server (`bootstrap.a2a.fun`): `/join`, `/peers` (candidate peer source; no trust)
 - Auto-join (opt-in): joins bootstrap, fetches peers, selects deterministically, persists `data/known-peers.json`
 - Transport baseline (direct first, relay second; mailbox not baseline):
   - `checkDirectReachability`, `selectTransport`, `decideTransport`, `executeTransport`
