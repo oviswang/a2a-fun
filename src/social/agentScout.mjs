@@ -15,6 +15,8 @@ export async function scoutAgentsFromSharedDirectory({ sharedClient, base_url, l
   }
 
   const selfId = String(local_agent_card.agent_id || '').trim();
+  const transportId = typeof globalThis.__A2A_TRANSPORT_NODE_ID === 'string' ? globalThis.__A2A_TRANSPORT_NODE_ID.trim() : '';
+  const selfIds = new Set([selfId, transportId].filter(Boolean));
 
   try {
     const out = await sharedClient.listPublishedAgentsRemote({ base_url });
@@ -22,7 +24,7 @@ export async function scoutAgentsFromSharedDirectory({ sharedClient, base_url, l
 
     const ids = out.agents
       .map((a) => (a && typeof a.agent_id === 'string' ? a.agent_id.trim() : null))
-      .filter((x) => typeof x === 'string' && x && x !== selfId);
+      .filter((x) => typeof x === 'string' && x && !selfIds.has(x));
 
     const uniq = [...new Set(ids)].sort((a, b) => String(a).localeCompare(String(b)));
 

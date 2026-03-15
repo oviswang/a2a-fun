@@ -1,4 +1,5 @@
 import http from 'node:http';
+import os from 'node:os';
 
 import * as officialCapabilities from '../../../examples/capabilities/index.mjs';
 import { listCapabilities } from '../../capability/capabilityDiscoveryList.mjs';
@@ -137,23 +138,59 @@ export function createHttpTransport() {
 
         if (req.method === 'POST' && req.url === '/agents/publish-self') {
           const workspace_path = process.env.A2A_WORKSPACE_PATH || '';
-          const fallback_agent_id = process.env.A2A_AGENT_ID || '';
+          const envLegacyAgentId = (process.env.A2A_AGENT_ID || '').trim();
+          const fallback_agent_id = envLegacyAgentId || os.hostname();
 
-          // Best-effort stable identity for directory publication.
-          // If unresolved, we fall back to the legacy agent_id/hostname behavior.
-          const stableCtx = {
-            gateway: process.env.A2A_PRINCIPAL_GATEWAY || process.env.A2A_SOCIAL_GATEWAY || process.env.A2A_GATEWAY || process.env.A2A_CHANNEL || null,
-            account_id: process.env.A2A_PRINCIPAL_ACCOUNT_ID || process.env.A2A_SOCIAL_CHANNEL_ID || process.env.A2A_CHAT_ID || null
-          };
-
-          let agent_id = fallback_agent_id;
+          // Optional runtime context (best-effort) can be supplied in the request body.
+          // Backward-compatible: empty body is allowed.
+          let runtimeContext = null;
           try {
-            const stable = resolveStableAgentIdentity({ context: stableCtx, agent_slug: 'default' });
-            if (stable.ok && typeof stable.stable_agent_id === 'string' && stable.stable_agent_id) {
-              agent_id = stable.stable_agent_id;
+            const raw = await readBody(req, 16 * 1024);
+            if (raw && raw.trim()) {
+              const parsed = JSON.parse(raw);
+              runtimeContext = parsed?.context && typeof parsed.context === 'object' ? parsed.context : parsed;
             }
           } catch {
-            // ignore
+            res.statusCode = 400;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'BAD_JSON' }));
+            return;
+          }
+
+          // Priority 1: explicit env principal hints.
+          const envPrincipalGateway = (process.env.A2A_PRINCIPAL_GATEWAY || '').trim();
+          const envPrincipalAccountId = (process.env.A2A_PRINCIPAL_ACCOUNT_ID || '').trim();
+
+          // Priority 2: runtime context hints.
+          const ctx = runtimeContext && typeof runtimeContext === 'object' ? runtimeContext : {};
+
+          const candidateContext = envPrincipalGateway && envPrincipalAccountId
+            ? { gateway: envPrincipalGateway, account_id: envPrincipalAccountId }
+            : {
+                gateway: ctx.gateway || ctx.channel || process.env.A2A_SOCIAL_GATEWAY || process.env.A2A_GATEWAY || process.env.A2A_CHANNEL || null,
+                account_id: ctx.account_id || ctx.chat_id || ctx.channel_id || process.env.A2A_SOCIAL_CHANNEL_ID || process.env.A2A_CHAT_ID || null,
+                chat_id: ctx.chat_id || null,
+                channel_id: ctx.channel_id || null
+              };
+
+          // Priority 3: gateway adapters (best-effort) — not implemented in v0.1.
+
+          let agent_id = fallback_agent_id;
+          let stable_identity = false;
+          let legacy_fallback = true;
+
+          try {
+            const stable = resolveStableAgentIdentity({ context: candidateContext, agent_slug: 'default' });
+            if (stable.ok && typeof stable.stable_agent_id === 'string' && stable.stable_agent_id) {
+              agent_id = stable.stable_agent_id;
+              stable_identity = true;
+              legacy_fallback = false;
+              console.log(JSON.stringify({ ok: true, event: 'stable_identity_resolved', principal_source: stable.principal_source, stable_agent_id: stable.stable_agent_id }));
+            } else {
+              console.log(JSON.stringify({ ok: true, event: 'stable_identity_unresolved', fallback_legacy_agent_id: fallback_agent_id }));
+            }
+          } catch {
+            console.log(JSON.stringify({ ok: true, event: 'stable_identity_unresolved', fallback_legacy_agent_id: fallback_agent_id }));
           }
 
           // Build local AgentCard once.
@@ -217,6 +254,9 @@ export function createHttpTransport() {
             ok: local_published,
             published: local_published,
             agent_id: entryOut.entry.agent_id,
+            stable_identity,
+            legacy_fallback,
+            legacy_agent_id: fallback_agent_id,
             local_published,
             remote_published,
             error: local_published ? null : (localOut.error || { code: 'LOCAL_PUBLISH_FAILED' })
