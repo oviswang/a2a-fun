@@ -83,11 +83,20 @@ export async function receiveAgentActivityDialogue({ workspace_path, payload, re
     try {
       console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_BUILDING', dialogue_id: did, ts: nowIso() }));
       const bFacts = fmtFacts(local);
+      const ocLine = local.openclaw_current_focus
+        ? `OpenClaw focus (me): ${local.openclaw_current_focus} (updated_at=${local.openclaw_updated_at || 'n/a'})`
+        : null;
+      const ocTopic = (local.openclaw_recent_topics && local.openclaw_recent_topics.length)
+        ? `OpenClaw recent topic (me): ${local.openclaw_recent_topics[0]}`
+        : null;
+
       const msgText = [
         `Recent local activity (me): ${bFacts}`,
+        ocLine,
+        ocTopic,
         `One difference vs you: my visible_agents=${local.visible_agents_count ?? 'n/a'}, your visible_agents=${payload.recent_activity?.visible_agents_count ?? 'n/a'}.`,
         `Next step (me): ${local.next_step || 'n/a'}`
-      ].join('\n');
+      ].filter(Boolean).join('\n');
 
       const out = createAgentActivityDialogueMessage({
         dialogue_id: did,

@@ -5,6 +5,7 @@ import path from 'node:path';
 import * as officialCapabilities from '../../examples/capabilities/index.mjs';
 import { listCapabilities } from '../capability/capabilityDiscoveryList.mjs';
 import { listLocalAgentMemory } from '../memory/localAgentMemory.mjs';
+import { readOpenClawRecentActivity } from './openclawRecentActivity.mjs';
 
 async function safeStat(p) {
   try {
@@ -107,6 +108,9 @@ export async function getAgentRecentActivity({ workspace_path } = {}) {
     // ignore
   }
 
+  // OpenClaw recent activity (best-effort, fail-closed)
+  const oc = await readOpenClawRecentActivity();
+
   // next step inference (deterministic)
   let next_step = null;
   if (mem.ok && Array.isArray(mem.records)) {
@@ -117,12 +121,27 @@ export async function getAgentRecentActivity({ workspace_path } = {}) {
     else next_step = 'discover peers and complete handshake/profile exchange';
   }
 
+  const node_recent_events = recent_events;
+
   return {
     ok: true,
     hostname,
     visible_agents_count: typeof visible_agents_count === 'number' ? visible_agents_count : null,
     capabilities: capIds,
+
+    // Back-compat
     recent_events,
+
+    // Explicit provenance
+    node_recent_events,
+
+    // OpenClaw-side enrichment (optional)
+    openclaw_updated_at: oc.ok ? oc.updated_at : null,
+    openclaw_current_focus: oc.ok ? oc.current_focus : null,
+    openclaw_recent_tasks: oc.ok ? oc.recent_tasks : [],
+    openclaw_recent_tools: oc.ok ? oc.recent_tools : [],
+    openclaw_recent_topics: oc.ok ? oc.recent_topics : [],
+
     latest_peer,
     latest_relationship_state,
     next_step,

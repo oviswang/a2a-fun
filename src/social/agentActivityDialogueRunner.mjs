@@ -71,11 +71,20 @@ export async function runAgentActivityDialogue({
 
   try {
     // Turn 1 (A -> B)
+    const ocLine = localA.openclaw_current_focus
+      ? `OpenClaw focus (me): ${localA.openclaw_current_focus} (updated_at=${localA.openclaw_updated_at || 'n/a'})`
+      : null;
+    const ocTask = (localA.openclaw_recent_tasks && localA.openclaw_recent_tasks.length)
+      ? `OpenClaw recent task (me): ${localA.openclaw_recent_tasks[0]}`
+      : null;
+
     const turn1Text = [
       `Recent local activity (me): ${describeLocal(localA, fromId)}`,
+      ocLine,
+      ocTask,
       `Next step (me): ${localA.next_step || 'n/a'}`,
-      `Question: what did you do recently? include one concrete local fact.`
-    ].join('\n');
+      `Question: what did you do recently? include one concrete local fact (include OpenClaw focus if you have it).`
+    ].filter(Boolean).join('\n');
 
     const t1 = createAgentActivityDialogueMessage({
       dialogue_id,
