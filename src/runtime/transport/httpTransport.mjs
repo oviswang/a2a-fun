@@ -10,6 +10,7 @@ import { createNetworkAgentDirectoryEntry } from '../../discovery/networkAgentDi
 import { publishLocalAgentCardRuntime } from '../../discovery/networkAgentPublishRuntime.mjs';
 import { extractAgentDiscoveryDocuments } from '../../discovery/agentDocumentExtractor.mjs';
 import { buildAgentCardFromDocuments } from '../../discovery/agentCardBuilder.mjs';
+import { introspectLocalCapabilities } from '../../discovery/agentCapabilityIntrospector.mjs';
 import { publishAgentCardRemote, listPublishedAgentsRemote } from '../../discovery/sharedAgentDirectoryClient.mjs';
 import { resolveStableAgentIdentity } from '../../identity/stableIdentityRuntime.mjs';
 
@@ -203,7 +204,18 @@ export function createHttpTransport() {
             return;
           }
 
-          const cardOut = buildAgentCardFromDocuments({ documents: docsOut.documents, agent_id });
+          // Best-effort capability introspection from local /capabilities.
+          let caps = [];
+          try {
+            const localPort = req?.socket?.localPort;
+            const capBase = typeof localPort === 'number' && localPort > 0 ? `http://127.0.0.1:${localPort}` : 'http://127.0.0.1:3000';
+            const capOut = await introspectLocalCapabilities({ base_url: capBase });
+            if (capOut.ok === true && Array.isArray(capOut.capabilities)) caps = capOut.capabilities;
+          } catch {
+            caps = [];
+          }
+
+          const cardOut = buildAgentCardFromDocuments({ documents: docsOut.documents, agent_id, capabilities: caps });
           if (!cardOut.ok) {
             const out = { ok: false, published: false, agent_id: agent_id || null, local_published: false, remote_published: false, error: cardOut.error };
             res.statusCode = 400;
