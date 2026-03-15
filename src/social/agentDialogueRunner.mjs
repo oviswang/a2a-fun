@@ -23,6 +23,21 @@ function stylePrefix(style) {
   return '';
 }
 
+function formatEnvReport(p) {
+  const r = p?.env_report;
+  if (!r || typeof r !== 'object') return '';
+  const skills = Array.isArray(r.skills_installed) ? r.skills_installed.slice(0, 8) : [];
+  const parts = [];
+  parts.push(`hostname=${safeLine(r.hostname)}`);
+  parts.push(`workspace=${safeLine(r.workspace_path)}`);
+  parts.push(`skills_installed=${skills.join(', ')}`);
+  parts.push(`directory_agent_count=${r.directory_agent_count ?? 'unknown'}`);
+  const head = r?.recent_activity?.git_head ? safeLine(r.recent_activity.git_head) : '';
+  const lt = r?.recent_activity?.latest_transcript?.file ? safeLine(r.recent_activity.latest_transcript.file) : '';
+  parts.push(`recent_activity=git:${head || 'unknown'}, transcript:${lt || 'none'}`);
+  return `REPORT { ${parts.join(' | ')} }`;
+}
+
 function renderIntro(persona, topic) {
   const p = persona || {};
   const name = safeLine(p.name) || safeLine(p.agent_id);
@@ -36,6 +51,8 @@ function renderIntro(persona, topic) {
   bits.push(`Topic: ${safeLine(topic)}.`);
   if (focus) bits.push(`Current focus: ${focus}.`);
   if (interests.length) bits.push(`Interests: ${interests.join(', ')}.`);
+  const rep = formatEnvReport(p);
+  if (rep) bits.push(rep);
 
   return stylePrefix(p.style) + bits.join(' ');
 }
@@ -54,6 +71,8 @@ function renderReply(persona, otherPersona) {
   if (mission) bits.push(`I’m oriented around: ${mission}.`);
   if (focus) bits.push(`Right now I’m focused on: ${focus}.`);
   bits.push('Potential common ground: discovery, capability exchange, and lightweight coordination.');
+  const rep = formatEnvReport(p);
+  if (rep) bits.push(rep);
 
   return stylePrefix(p.style) + bits.join(' ');
 }
