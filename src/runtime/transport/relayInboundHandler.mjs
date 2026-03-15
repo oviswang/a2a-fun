@@ -12,7 +12,7 @@ function isObj(x) {
  * Minimal inbound handler for forwarded relay payloads.
  * Preserves existing behavior for non-handshake payloads (no-op).
  */
-export function createRelayInboundHandler({ workspace_path, relayUrl = null, nodeId = null } = {}) {
+export function createRelayInboundHandler({ workspace_path, relayUrl = null, nodeId = null, relayClient = null } = {}) {
   const ws = typeof workspace_path === 'string' && workspace_path.trim() ? workspace_path.trim() : process.cwd();
   const ru = typeof relayUrl === 'string' && relayUrl.trim() ? relayUrl.trim() : null;
   const nid = typeof nodeId === 'string' && nodeId.trim() ? nodeId.trim() : null;
@@ -34,7 +34,7 @@ export function createRelayInboundHandler({ workspace_path, relayUrl = null, nod
     }
 
     if (payload.kind === 'AGENT_ACTIVITY_DIALOGUE') {
-      const res = await receiveAgentActivityDialogue({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid, from });
+      const res = await receiveAgentActivityDialogue({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid, from, relayClient });
       return { ok: res.ok === true, handled: true, kind: 'AGENT_ACTIVITY_DIALOGUE', error: res.ok ? null : res.error };
     }
 

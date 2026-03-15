@@ -24,7 +24,7 @@ function fmtFacts(ra) {
 // In-memory dialogue state (per-process)
 const sessions = new Map(); // dialogue_id -> { last_turn }
 
-export async function receiveAgentActivityDialogue({ workspace_path, payload, relayUrl, nodeId, from } = {}) {
+export async function receiveAgentActivityDialogue({ workspace_path, payload, relayUrl, nodeId, from, relayClient = null } = {}) {
   if (!isAgentActivityDialogueMessage(payload)) return { ok: false, error: { code: 'NOT_ACTIVITY_DIALOGUE' } };
 
   const did = safe(payload.dialogue_id);
@@ -51,17 +51,28 @@ export async function receiveAgentActivityDialogue({ workspace_path, payload, re
   const replyTo = safe(from) || fromId;
 
   async function reply(payloadToSend) {
-    if (!ru) throw new Error('MISSING_RELAY_URL');
-    const client = await createRelayClient({ relayUrl: ru, nodeId: nid, registrationMode: 'v2', sessionId: `sess:${nid}`, onForward: () => {} });
+    console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_REPLY_PATH_START', dialogue_id: did, to: replyTo, ts: nowIso() }));
+
     try {
-      await client.connect();
-      await client.relay({ to: replyTo, payload: payloadToSend });
-      console.log(JSON.stringify({ ok: true, event: 'AGENT_ACTIVITY_DIALOGUE_REPLIED', dialogue_id: did, to: replyTo, turn: payloadToSend?.turn, ts: nowIso() }));
+      if (relayClient && typeof relayClient.relay === 'function') {
+        await relayClient.relay({ to: replyTo, payload: payloadToSend });
+      } else {
+        // Fallback (should not be used after session-fix wiring): one-shot relay client.
+        if (!ru) throw new Error('MISSING_RELAY_URL');
+        const client = await createRelayClient({ relayUrl: ru, nodeId: nid, registrationMode: 'v2', sessionId: `sess:${nid}`, onForward: () => {} });
+        await client.connect();
+        try {
+          await client.relay({ to: replyTo, payload: payloadToSend });
+        } finally {
+          await client.close().catch(() => {});
+          console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_REPLY_PATH_UNREGISTER', dialogue_id: did, ts: nowIso() }));
+        }
+      }
+
+      console.log(JSON.stringify({ ok: true, event: 'ACTIVITY_DIALOGUE_TURN2_REPLY_PATH_SENT', dialogue_id: did, to: replyTo, ts: nowIso() }));
     } catch (err) {
-      console.log(JSON.stringify({ ok: false, event: 'AGENT_ACTIVITY_DIALOGUE_REPLY_FAILED', dialogue_id: did, to: replyTo, error: String(err?.message || err), ts: nowIso() }));
+      console.log(JSON.stringify({ ok: false, event: 'ACTIVITY_DIALOGUE_TURN2_REPLY_PATH_FAILED', dialogue_id: did, to: replyTo, error: String(err?.message || err), ts: nowIso() }));
       throw err;
-    } finally {
-      await client.close().catch(() => {});
     }
   }
 
