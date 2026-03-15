@@ -3,6 +3,8 @@ import { startRuntimeNodeFormal } from '../src/runtime/node/runtimeNodeFormal.mj
 import { createHttpTransport } from '../src/runtime/transport/httpTransport.mjs';
 import { createFetchHttpClient } from '../src/runtime/bootstrap/bootstrapClient.mjs';
 import { runNodeAutoJoin } from '../src/runtime/bootstrap/nodeAutoJoin.mjs';
+import { createRelayClient } from '../src/runtime/transport/relayClient.mjs';
+import { createRelayInboundHandler } from '../src/runtime/transport/relayInboundHandler.mjs';
 
 function envBool(name, def = false) {
   const v = process.env[name];
@@ -85,6 +87,32 @@ if (envBool('ENABLE_AUTO_JOIN', false)) {
 const identity = {
   node_name: process.env.NODE_NAME || 'a2a-node'
 };
+
+// Optional relay inbound wiring (v0.1): listen for forwarded relay payloads and apply AGENT_HANDSHAKE.
+// Disabled by default to avoid changing unrelated deployments.
+if (envBool('ENABLE_RELAY_INBOUND', false)) {
+  const relayUrl = process.env.RELAY_URL || 'wss://bootstrap.a2a.fun/relay';
+  const nodeId = process.env.NODE_ID || process.env.A2A_AGENT_ID || process.env.NODE_NAME || 'a2a-node';
+  const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
+
+  const handleForward = createRelayInboundHandler({ workspace_path });
+
+  const relayClient = createRelayClient({
+    relayUrl,
+    nodeId,
+    registrationMode: 'v2',
+    sessionId: `sess:${nodeId}`,
+    onForward: ({ from, payload }) => {
+      // best-effort: do not crash the node on handler errors
+      handleForward({ from, payload }).catch(() => {});
+    }
+  });
+
+  relayClient.connect().then(
+    () => console.log(JSON.stringify({ ok: true, event: 'RELAY_INBOUND_CONNECTED', relayUrl, nodeId })),
+    () => console.log(JSON.stringify({ ok: false, event: 'RELAY_INBOUND_CONNECT_FAILED', relayUrl, nodeId }))
+  );
+}
 
 let node;
 if (RUNTIME_MODE === 'formal') {
