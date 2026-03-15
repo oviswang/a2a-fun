@@ -8,6 +8,7 @@ import { rankAgentsByRelevance } from './agentMatcher.mjs';
 import { createAgentSocialState, shouldContactCandidate, markContacted } from './agentSocialState.mjs';
 
 import { bestEffortEmitSocialFeed } from './socialFeedRuntimeHook.mjs';
+import { resolveStableAgentIdentity } from '../identity/stableIdentityRuntime.mjs';
 
 function fail(code) {
   return {
@@ -38,9 +39,23 @@ export async function runAgentSocialEngineLiveRun({
   // Provide a default send/context for observable local validation.
   if (typeof send === 'function') globalThis.__A2A_SOCIAL_SEND = send;
   if (context) globalThis.__A2A_SOCIAL_CONTEXT = context;
-  globalThis.__A2A_AGENT_ID = agent_id.trim();
+  // Resolve stable identity (best-effort). Transport/runtime ids remain separate.
+  const transport_node_id = agent_id.trim();
+  let local_agent_id = transport_node_id;
+  try {
+    const stable = resolveStableAgentIdentity({ context, agent_slug: 'default' });
+    if (stable.ok && typeof stable.stable_agent_id === 'string' && stable.stable_agent_id) {
+      local_agent_id = stable.stable_agent_id;
+      globalThis.__A2A_PRINCIPAL_SOURCE = stable.principal_source;
+    }
+  } catch {
+    // ignore
+  }
 
-  const local_agent_id = agent_id.trim();
+  globalThis.__A2A_TRANSPORT_NODE_ID = transport_node_id;
+  globalThis.__A2A_AGENT_ID = local_agent_id;
+
+  
   const social_state = createAgentSocialState();
 
   // 1) publish self (best-effort; return machine-safe status)

@@ -10,6 +10,7 @@ import { publishLocalAgentCardRuntime } from '../../discovery/networkAgentPublis
 import { extractAgentDiscoveryDocuments } from '../../discovery/agentDocumentExtractor.mjs';
 import { buildAgentCardFromDocuments } from '../../discovery/agentCardBuilder.mjs';
 import { publishAgentCardRemote, listPublishedAgentsRemote } from '../../discovery/sharedAgentDirectoryClient.mjs';
+import { resolveStableAgentIdentity } from '../../identity/stableIdentityRuntime.mjs';
 
 export function createHttpTransport() {
   const directory = createNetworkAgentDirectory();
@@ -136,7 +137,24 @@ export function createHttpTransport() {
 
         if (req.method === 'POST' && req.url === '/agents/publish-self') {
           const workspace_path = process.env.A2A_WORKSPACE_PATH || '';
-          const agent_id = process.env.A2A_AGENT_ID || '';
+          const fallback_agent_id = process.env.A2A_AGENT_ID || '';
+
+          // Best-effort stable identity for directory publication.
+          // If unresolved, we fall back to the legacy agent_id/hostname behavior.
+          const stableCtx = {
+            gateway: process.env.A2A_PRINCIPAL_GATEWAY || process.env.A2A_SOCIAL_GATEWAY || process.env.A2A_GATEWAY || process.env.A2A_CHANNEL || null,
+            account_id: process.env.A2A_PRINCIPAL_ACCOUNT_ID || process.env.A2A_SOCIAL_CHANNEL_ID || process.env.A2A_CHAT_ID || null
+          };
+
+          let agent_id = fallback_agent_id;
+          try {
+            const stable = resolveStableAgentIdentity({ context: stableCtx, agent_slug: 'default' });
+            if (stable.ok && typeof stable.stable_agent_id === 'string' && stable.stable_agent_id) {
+              agent_id = stable.stable_agent_id;
+            }
+          } catch {
+            // ignore
+          }
 
           // Build local AgentCard once.
           const docsOut = await extractAgentDiscoveryDocuments({ workspace_path });
