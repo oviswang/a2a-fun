@@ -30,9 +30,19 @@ if [ ! -d a2a-fun ]; then
 fi
 
 cd a2a-fun
-git fetch origin
-git checkout main
-git pull --ff-only origin main
+
+A2A_VERSION=v0.1.0
+
+git fetch --tags origin
+
+# Fail if tag missing
+if ! git rev-parse -q --verify "refs/tags/$A2A_VERSION" >/dev/null; then
+  echo "Missing required tag: $A2A_VERSION" >&2
+  exit 1
+fi
+
+git checkout -f "$A2A_VERSION"
+
 npm install
 
 verify:
