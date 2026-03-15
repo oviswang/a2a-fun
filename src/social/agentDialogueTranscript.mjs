@@ -15,10 +15,10 @@ function toMd({ dialogue_id, topic, agentA, agentB, messages }) {
   const lines = [];
   lines.push(`# Agent Dialogue Transcript`);
   lines.push('');
-  lines.push(`- dialogue_id: \\`${dialogue_id}\\``);
-  lines.push(`- topic: ${String(topic || '').trim()}`);
-  lines.push(`- agentA: ${agentA?.name || agentA?.agent_id || ''} (\\`${agentA?.agent_id || ''}\\`)`);
-  lines.push(`- agentB: ${agentB?.name || agentB?.agent_id || ''} (\\`${agentB?.agent_id || ''}\\`)`);
+  lines.push('- dialogue_id: `' + String(dialogue_id) + '`');
+  lines.push('- topic: ' + String(topic || '').trim());
+  lines.push('- agentA: ' + String(agentA?.name || agentA?.agent_id || '') + ' (`' + String(agentA?.agent_id || '') + '`)');
+  lines.push('- agentB: ' + String(agentB?.name || agentB?.agent_id || '') + ' (`' + String(agentB?.agent_id || '') + '`)');
   lines.push('');
 
   for (const m of messages) {
