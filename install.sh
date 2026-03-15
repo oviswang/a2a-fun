@@ -30,4 +30,18 @@ else
   echo ".env already exists; not overwriting"
 fi
 
+echo "Pre-initializing OpenClaw bridge agent (a2a_bridge)..."
+if command -v openclaw >/dev/null 2>&1; then
+  # Optional: create agent if missing (minimal, expected OpenClaw behavior).
+  if ! openclaw agents list 2>/dev/null | grep -q "^- a2a_bridge"; then
+    echo "Creating OpenClaw agent: a2a_bridge"
+    openclaw agents add a2a_bridge --non-interactive --workspace "$PWD" --model openai/gpt-5.2 >/dev/null
+  fi
+
+  # Pre-init session (text-only).
+  node scripts/openclaw_preinit_a2a_bridge.mjs >/dev/null || true
+else
+  echo "openclaw CLI not found; skipping a2a_bridge preinit" >&2
+fi
+
 echo "Install complete."

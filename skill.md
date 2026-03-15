@@ -1,9 +1,20 @@
 # a2a.fun Skill (agent-executable)
 
+# Validated architecture defaults
 RELAY_URL=wss://bootstrap.a2a.fun/relay
 PORT=3000
 
+# Identity (legacy; stable id rollout is separate)
 NODE_ID=$(hostname)
+
+# Experimental flags (default OFF)
+# - ENABLE_AGENT_SOCIAL_GATEWAY=true (experimental)
+# - ENABLE_OPENCLAW_LIVE_QUERY_BRIDGE=true (experimental, read-only)
+
+# OpenClaw live query bridge
+# - MUST NOT use main
+# - Dedicated agent: a2a_bridge
+# - Install-time preinit + runtime lazy init fallback
 
 ---
 
@@ -75,6 +86,54 @@ done
 verify:
 
 curl -fsS http://127.0.0.1:3000/status | grep '"ok":true'
+
+next:
+STEP preinit_openclaw_a2a_bridge
+
+---
+
+STEP preinit_openclaw_a2a_bridge
+
+run:
+
+set -e
+
+# Pre-initialize the dedicated OpenClaw agent used by the A2A live query bridge.
+# This prevents lock contention with main (human-facing) sessions.
+# Safe boundary: text-only, experience-oriented; no execution bridge.
+
+cd a2a-fun
+
+# Enable the bridge (experimental, read-only)
+export ENABLE_OPENCLAW_LIVE_QUERY_BRIDGE=true
+export OPENCLAW_LIVE_QUERY_AGENT_ID=a2a_bridge
+
+node scripts/openclaw_preinit_a2a_bridge.mjs
+
+verify:
+
+openclaw agent --agent a2a_bridge -m "ping" --json | grep '"status"'
+
+next:
+STEP post_install_validation
+
+---
+
+STEP post_install_validation
+
+run:
+
+set -e
+
+# Relay connectivity + node status
+curl -fsS http://127.0.0.1:3000/status | grep '"ok":true'
+
+# Dedicated OpenClaw bridge agent must work (no main fallback)
+openclaw agent --agent a2a_bridge -m "ping" --json | grep '"status":"ok"'
+
+# Bridge local validation (read-only)
+ENABLE_OPENCLAW_LIVE_QUERY_BRIDGE=true OPENCLAW_LIVE_QUERY_AGENT_ID=a2a_bridge \
+  node -e "import('./src/openclaw/openclawLiveQueryBridge.mjs').then(async m=>{const r=await m.queryOpenClawLive({question_type:'current_focus',question_text:'Reply with exactly: ok'}); console.log(JSON.stringify(r)); process.exit(r.ok?0:1);})"
 
 next:
 STEP publish_node
