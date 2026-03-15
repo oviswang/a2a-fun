@@ -44,20 +44,26 @@ export async function runAgentActivityDialogue({
 
   const turns = [];
 
-  const client = await createRelayClient({ relayUrl, nodeId: fromId, sessionId: `sess:${fromId}` });
-  const connectOut = await client.connect();
-  if (!connectOut.ok) return { ok: false, error: connectOut.error };
+  const inbox = [];
+  const client = await createRelayClient({
+    relayUrl,
+    nodeId: fromId,
+    sessionId: `sess:${fromId}`,
+    onForward: ({ from, payload }) => {
+      inbox.push({ from, payload });
+    }
+  });
+  await client.connect();
 
   const waitForTurn = async (expectedTurn, timeoutMs = 5000) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const got = await client.receive({ timeoutMs: 500 });
-      if (!got.ok) continue;
-      const p = got.payload;
-      if (!p || p.kind !== 'AGENT_ACTIVITY_DIALOGUE') continue;
-      if (p.dialogue_id !== dialogue_id) continue;
-      if (Number(p.turn) !== expectedTurn) continue;
-      return { ok: true, payload: p };
+      const idx = inbox.findIndex((m) => m?.payload?.kind === 'AGENT_ACTIVITY_DIALOGUE' && m.payload.dialogue_id === dialogue_id && Number(m.payload.turn) === expectedTurn);
+      if (idx !== -1) {
+        const msg = inbox.splice(idx, 1)[0];
+        return { ok: true, payload: msg.payload };
+      }
+      await new Promise((r) => setTimeout(r, 50));
     }
     return { ok: false, error: { code: 'TIMEOUT', expectedTurn } };
   };
@@ -82,7 +88,7 @@ export async function runAgentActivityDialogue({
     });
     if (!t1.ok) return { ok: false, error: t1.error };
 
-    await client.forward({ to: toId, payload: t1.message });
+    await client.relay({ to: toId, payload: t1.message });
     turns.push({ turn: 1, from_agent_id: fromId, from_hostname: localA.hostname, message: turn1Text, recent_activity: localA });
 
     // Turn 2 (B -> A)
@@ -109,7 +115,7 @@ export async function runAgentActivityDialogue({
       timestamp: nowIso()
     });
 
-    await client.forward({ to: toId, payload: t3.message });
+    await client.relay({ to: toId, payload: t3.message });
     turns.push({ turn: 3, from_agent_id: fromId, from_hostname: localA.hostname, message: aAsk, recent_activity: localA });
 
     // Turn 4 (B -> A)
