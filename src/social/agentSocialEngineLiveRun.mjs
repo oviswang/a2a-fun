@@ -11,6 +11,8 @@ import { bestEffortEmitSocialFeed } from './socialFeedRuntimeHook.mjs';
 import { resolveStableAgentIdentity } from '../identity/stableIdentityRuntime.mjs';
 import { upsertDiscoveredAgent, loadLocalAgentMemory, saveLocalAgentMemory, upsertLocalAgentMemoryRecord, getDefaultLocalAgentMemoryPath } from '../memory/localAgentMemory.mjs';
 import { sendAgentHandshake } from './agentHandshakeSender.mjs';
+import { buildAgentCurrentProfile } from './agentCurrentProfile.mjs';
+import { sendAgentProfileExchange } from './agentProfileExchangeSender.mjs';
 
 function fail(code) {
   return {
@@ -165,6 +167,30 @@ export async function runAgentSocialEngineLiveRun({
           });
           if (up.ok) await saveLocalAgentMemory({ file_path, records: up.records });
         }
+      }
+
+      // 6b) introduced -> engaged trigger (best-effort; send once per peer)
+      try {
+        const loaded2 = await loadLocalAgentMemory({ file_path });
+        if (loaded2.ok) {
+          const rec2 = loaded2.records.find((r) => (r?.stable_agent_id && r.stable_agent_id === top.agent_id) || (r?.legacy_agent_id && r.legacy_agent_id === top.agent_id)) || null;
+          const state2 = rec2?.relationship_state;
+          const last_dialogue_at = rec2?.last_dialogue_at || null;
+          if (state2 === 'introduced' && !last_dialogue_at) {
+            const relayUrl = process.env.RELAY_URL || 'wss://bootstrap.a2a.fun/relay';
+            const profOut = await buildAgentCurrentProfile({ workspace_path, agent_id: localCardOut.agent_card.agent_id, local_base_url: 'http://127.0.0.1:3000' });
+            if (profOut.ok) {
+              await sendAgentProfileExchange({
+                local_profile: profOut.profile,
+                remote_agent_id: top.agent_id,
+                relayUrl,
+                prompt: 'current focus, strengths, and one next step'
+              });
+            }
+          }
+        }
+      } catch {
+        // ignore
       }
     }
   } catch {

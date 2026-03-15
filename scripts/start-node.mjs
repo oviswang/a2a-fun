@@ -95,7 +95,7 @@ if (envBool('ENABLE_RELAY_INBOUND', false)) {
   const nodeId = process.env.NODE_ID || process.env.A2A_AGENT_ID || process.env.NODE_NAME || 'a2a-node';
   const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
 
-  const handleForward = createRelayInboundHandler({ workspace_path });
+  const handleForward = createRelayInboundHandler({ workspace_path, relayUrl, nodeId });
 
   const relayClient = createRelayClient({
     relayUrl,
