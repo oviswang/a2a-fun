@@ -1,0 +1,28 @@
+{
+  "ok": true,
+  "version": "task_topics.v0.1",
+  "updated_at": null,
+  "topics": [
+    {
+      "topic": "relay_stability",
+      "types": ["run_check"],
+      "related_topics": ["network_diagnostics"],
+      "time_window": "last_24h",
+      "enabled": true
+    },
+    {
+      "topic": "network_diagnostics",
+      "types": ["node_diagnose"],
+      "related_topics": ["relay_stability"],
+      "time_window": "last_24h",
+      "enabled": true
+    },
+    {
+      "topic": "asset_market_signal",
+      "types": ["web_research"],
+      "related_topics": ["network_diagnostics"],
+      "time_window": "last_24h",
+      "enabled": true
+    }
+  ]
+}
