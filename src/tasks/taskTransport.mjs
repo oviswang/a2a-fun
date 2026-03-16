@@ -27,12 +27,12 @@ export async function sendTaskPublished({ relayUrl = 'wss://bootstrap.a2a.fun/re
   return { ok: true };
 }
 
-export async function sendTaskResult({ relayUrl = 'wss://bootstrap.a2a.fun/relay', from_peer_id, to_peer_id, task_id, final_status, result, error } = {}) {
+export async function sendTaskResult({ relayUrl = 'wss://bootstrap.a2a.fun/relay', from_peer_id, to_peer_id, task_id, final_status, result, result_hash, error } = {}) {
   const from = safeStr(from_peer_id);
   const to = safeStr(to_peer_id);
   if (!from || !to) return { ok: false, error: { code: 'MISSING_PEER_IDS' } };
 
-  const built = buildTaskResultMessage({ task_id, from_peer_id: from, to_peer_id: to, final_status, result, error });
+  const built = buildTaskResultMessage({ task_id, from_peer_id: from, to_peer_id: to, final_status, result, result_hash, error });
   if (!built.ok) return { ok: false, error: built.error };
 
   const client = createRelayClient({

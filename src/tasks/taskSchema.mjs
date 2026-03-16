@@ -38,7 +38,9 @@ export function createTask({ type, topic, created_by, input } = {}) {
     assigned_to: null,
     status: 'published',
     input: input && typeof input === 'object' ? input : {},
+    fingerprint: null,
     result: null,
+    result_hash: null,
     error: null,
     lease: {
       holder: null,

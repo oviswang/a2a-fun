@@ -9,6 +9,7 @@ import { executeTask } from '../tasks/taskExecutor.mjs';
 import { sendTaskResult } from '../tasks/taskTransport.mjs';
 import { sendTaskSyncRequest } from '../tasks/taskSyncTransport.mjs';
 import { recoverStuckTasks } from '../tasks/taskRecovery.mjs';
+import { shouldSkipExecution } from '../tasks/taskDedup.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -145,18 +146,27 @@ export async function runLoop({
         return { idle: false, error: acc.error, stage: 'accept', task_id: picked.task_id };
       }
 
-      await markRunning({ tasks_path, task_id: picked.task_id });
+      // Dedup guard: skip execution if already completed with matching fingerprint
+      const guard = shouldSkipExecution({ task: picked });
+      if (guard.ok && guard.skip) {
+        console.log(JSON.stringify({ ok: true, event: 'TASK_EXECUTION_SKIPPED_DUPLICATE', task_id: picked.task_id, fingerprint: guard.fingerprint }));
+      } else {
+        await markRunning({ tasks_path, task_id: picked.task_id });
 
-      let execRes = null;
-      try {
-        execRes = await executeTask({ task: picked, relay_local_http: relay });
-        if (execRes && execRes.ok) {
-          await completeTask({ tasks_path, task_id: picked.task_id, result: execRes });
-        } else {
-          await failTask({ tasks_path, task_id: picked.task_id, error: execRes?.error || { code: 'EXEC_FAILED' } });
+        let execRes = null;
+        try {
+          execRes = await executeTask({ task: picked, relay_local_http: relay });
+          if (execRes && execRes.ok) {
+            // persist fingerprint + result_hash
+            picked.fingerprint = picked.fingerprint || guard.fingerprint || null;
+            picked.result_hash = execRes.result_hash || null;
+            await completeTask({ tasks_path, task_id: picked.task_id, result: execRes });
+          } else {
+            await failTask({ tasks_path, task_id: picked.task_id, error: execRes?.error || { code: 'EXEC_FAILED' } });
+          }
+        } catch (e) {
+          await failTask({ tasks_path, task_id: picked.task_id, error: { code: 'EXEC_THROW', message: String(e?.message || e) } });
         }
-      } catch (e) {
-        await failTask({ tasks_path, task_id: picked.task_id, error: { code: 'EXEC_THROW', message: String(e?.message || e) } });
       }
 
       // If this task originated from a remote creator, send result back (best-effort)

@@ -19,7 +19,7 @@ export function buildTaskPublishedMessage({ task, from_peer_id } = {}) {
   };
 }
 
-export function buildTaskResultMessage({ task_id, from_peer_id, to_peer_id, final_status, result, error } = {}) {
+export function buildTaskResultMessage({ task_id, from_peer_id, to_peer_id, final_status, result, result_hash, error } = {}) {
   const tid = safeStr(task_id);
   if (!tid) return { ok: false, error: { code: 'MISSING_TASK_ID' } };
   return {
@@ -32,6 +32,7 @@ export function buildTaskResultMessage({ task_id, from_peer_id, to_peer_id, fina
       task_id: tid,
       final_status: safeStr(final_status) || null,
       result: result ?? null,
+      result_hash: safeStr(result_hash) || null,
       error: error ?? null
     }
   };

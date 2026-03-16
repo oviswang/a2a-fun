@@ -1,4 +1,5 @@
 import { nowIso } from './taskSchema.mjs';
+import { computeFingerprint, computeResultHash } from './taskDedup.mjs';
 
 async function execQuery(task) {
   const question = String(task?.input?.question || '').trim();
@@ -55,9 +56,22 @@ async function execRunCheck(task, { relay_local_http = 'http://127.0.0.1:18884' 
 }
 
 export async function executeTask({ task, relay_local_http } = {}) {
+  // Compute and attach fingerprint (deterministic)
+  try {
+    if (task && typeof task === 'object') task.fingerprint = task.fingerprint || computeFingerprint(task);
+  } catch {}
+
   const type = task?.type;
-  if (type === 'query') return execQuery(task);
-  if (type === 'fetch') return execFetch(task);
-  if (type === 'run_check') return execRunCheck(task, { relay_local_http });
-  return { ok: false, error: { code: 'UNSUPPORTED_TASK_TYPE' } };
+  let res;
+  if (type === 'query') res = await execQuery(task);
+  else if (type === 'fetch') res = await execFetch(task);
+  else if (type === 'run_check') res = await execRunCheck(task, { relay_local_http });
+  else res = { ok: false, error: { code: 'UNSUPPORTED_TASK_TYPE' } };
+
+  // Compute result_hash on successful completion
+  try {
+    if (res && res.ok === true) res.result_hash = computeResultHash(res);
+  } catch {}
+
+  return res;
 }

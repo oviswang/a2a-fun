@@ -1,5 +1,6 @@
 import { publishTask, loadTasks, saveTasks, getTasksPath } from './taskStore.mjs';
 import { validateTask } from './taskSchema.mjs';
+import { computeResultHash, handleDuplicateResult } from './taskDedup.mjs';
 
 function isObj(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
@@ -38,6 +39,8 @@ export async function receiveTaskResult({ workspace_path, payload } = {}) {
   const tasks_path = getTasksPath({ workspace_path: ws });
   const loaded = await loadTasks({ tasks_path });
   const t = loaded.table.tasks.find((x) => x.task_id === task_id) || null;
+  const incomingHash = safeStr(payload.result_hash) || computeResultHash(payload.result ?? null);
+
   if (!t) {
     // Store a minimal completed record if missing
     loaded.table.tasks.push({
@@ -49,13 +52,33 @@ export async function receiveTaskResult({ workspace_path, payload } = {}) {
       assigned_to: payload.from_peer_id || null,
       status: payload.final_status || 'completed',
       input: {},
+      fingerprint: null,
       result: payload.result ?? null,
+      result_hash: incomingHash,
       error: payload.error ?? null,
       lease: { holder: payload.from_peer_id || null, expires_at: null }
     });
   } else {
+    const ded = handleDuplicateResult({
+      localTask: t,
+      incomingFinalStatus: payload.final_status,
+      incomingResult: payload.result,
+      incomingResultHash: incomingHash
+    });
+
+    if (ded.action === 'ignore') {
+      console.log(JSON.stringify({ ok: true, event: ded.log, task_id }));
+      return { ok: true, task_id, dedup: 'ignored' };
+    }
+
+    if (ded.action === 'conflict') {
+      console.log(JSON.stringify({ ok: true, event: ded.log, task_id }));
+      return { ok: true, task_id, dedup: 'conflict' };
+    }
+
     t.status = payload.final_status || 'completed';
     t.result = payload.result ?? null;
+    t.result_hash = incomingHash;
     t.error = payload.error ?? null;
   }
 
