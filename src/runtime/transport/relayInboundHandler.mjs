@@ -6,6 +6,7 @@ import { receiveOpenClawLiveQuery } from '../../openclaw/openclawLiveQueryReceiv
 import { receiveTaskPublished, receiveTaskResult } from '../../tasks/taskReceiver.mjs';
 import { receiveTaskSyncRequest, receiveTaskSyncResponse } from '../../tasks/taskSync.mjs';
 import { receiveTaskAccepted } from '../../tasks/taskClaim.mjs';
+import { receivePeerGossip } from '../../peers/peerGossip.mjs';
 
 function isObj(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
@@ -79,6 +80,11 @@ export function createRelayInboundHandler({ workspace_path, relayUrl = null, nod
     if (payload.kind === 'A2A_TASK_ACCEPTED') {
       const res = await receiveTaskAccepted({ workspace_path: ws, payload });
       return { ok: res.ok === true, handled: true, kind: 'A2A_TASK_ACCEPTED', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'A2A_PEER_GOSSIP') {
+      const res = await receivePeerGossip({ workspace_path: ws, payload });
+      return { ok: res.ok === true, handled: true, kind: 'A2A_PEER_GOSSIP', error: res.ok ? null : res.error };
     }
 
     return { ok: true, handled: false, kind: payload.kind || null };

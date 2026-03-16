@@ -12,6 +12,7 @@ import { recoverStuckTasks } from '../tasks/taskRecovery.mjs';
 import { shouldSkipExecution } from '../tasks/taskDedup.mjs';
 import { loadNodeCapabilities, taskMatchesCapabilities } from './nodeCapabilities.mjs';
 import { sendTaskAccepted } from '../tasks/taskClaimTransport.mjs';
+import { sendPeerGossip } from '../peers/peerGossipTransport.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -88,7 +89,8 @@ export async function runLoop({
   directory = 'https://bootstrap.a2a.fun',
   relayUrl = 'wss://bootstrap.a2a.fun/relay',
   task_sync_peer_id = null,
-  claim_announce_peers = null
+  claim_announce_peers = null,
+  gossip_peers = null
 } = {}) {
   const ws = typeof workspace_path === 'string' && workspace_path.trim() ? workspace_path : process.cwd();
   const h = String(holder || '').trim();
@@ -122,6 +124,24 @@ export async function runLoop({
           await savePeers({ peers_path, table: disc.table });
           state.last_peer_refresh_at = nowIso();
         }
+      }
+
+      // Peer gossip (every 30s, best-effort)
+      const gossipDue = peerDue;
+      if (daemon && gossipDue) {
+        try {
+          const peers_path = getPeersPath({ workspace_path: ws });
+          const loadedPeers = await (await import('../peers/peerStore.mjs')).loadPeers({ peers_path });
+          const known = Array.isArray(loadedPeers.table?.peers) ? loadedPeers.table.peers : [];
+          const peersList = known.map((p) => ({ node_id: p.peer_id, relay: p?.endpoints?.relay_url || 'wss://bootstrap.a2a.fun/relay', last_seen: p?.liveness?.last_seen || null }));
+
+          const toList = Array.isArray(gossip_peers) ? gossip_peers : [];
+          for (const to of toList) {
+            const tid = String(to || '').trim();
+            if (!tid || tid === h) continue;
+            await sendPeerGossip({ relayUrl, from_node_id: h, to_node_id: tid, peers: peersList }).catch(() => null);
+          }
+        } catch {}
       }
 
       // B) sync tasks (every 10s) + task sync protocol (every 60s)
