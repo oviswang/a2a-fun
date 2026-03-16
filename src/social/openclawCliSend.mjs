@@ -31,9 +31,24 @@ export function createOpenClawCliSend() {
     const base = safeStr(process.env.OPENCLAW_GATEWAY_URL) || 'http://127.0.0.1:18789';
     const url = base.replace(/\/$/, '') + '/__a2a__/send';
 
+    // Read gateway bearer token from ~/.openclaw/openclaw.json (gateway.auth.token)
+    let token = '';
+    try {
+      const fs = await import('node:fs/promises');
+      const os = await import('node:os');
+      const path = await import('node:path');
+      const p = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+      const raw = await fs.readFile(p, 'utf8');
+      const cfg = JSON.parse(raw);
+      token = (cfg?.gateway?.auth?.token && String(cfg.gateway.auth.token).trim()) || '';
+    } catch {}
+
+    const headers = { 'content-type': 'application/json' };
+    if (token) headers.authorization = `Bearer ${token}`;
+
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({ channel, target, message: text })
     }).catch((e) => {
       const err = new Error('openclaw gateway send failed (fetch)');

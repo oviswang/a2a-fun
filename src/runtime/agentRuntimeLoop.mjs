@@ -129,12 +129,26 @@ export async function runLoop({
       // Failure recovery: reclaim expired/orphaned tasks (every tick)
       await recoverStuckTasks({ workspace_path: ws }).catch(() => null);
 
-      // JOIN_NETWORK_SIGNAL_V0_1 (minimal): announce first successful join (best-effort)
+      // JOIN_NETWORK_SIGNAL_V1: announce first successful join (best-effort)
       try {
         if (daemon && state.first_join_announced !== true) {
           const channel = (process.env.RADAR_DELIVERY_CHANNEL || '').trim();
           const target = (process.env.RADAR_DELIVERY_TARGET || '').trim();
           if (channel && target) {
+            const flag = (country) => {
+              const c = String(country || '').trim().toLowerCase();
+              if (!c) return '';
+              const map = {
+                singapore: '🇸🇬',
+                'united states': '🇺🇸',
+                usa: '🇺🇸',
+                china: '🇨🇳',
+                japan: '🇯🇵',
+                germany: '🇩🇪'
+              };
+              return map[c] || '';
+            };
+
             let stats = null;
             try {
               const r = await fetch('https://bootstrap.a2a.fun/network_stats', { method: 'GET' });
@@ -143,15 +157,16 @@ export async function runLoop({
 
             const connected = Number(stats?.connected_nodes ?? 0);
             const active24h = Number(stats?.active_agents_last_24h ?? 0);
-            const regions = Array.isArray(stats?.regions) ? stats.regions : Array.isArray(stats?.active_regions) ? stats.active_regions : [];
+            const regions = Array.isArray(stats?.regions) ? stats.regions : [];
 
-            const lines = [];
+            const regionLines = [];
             for (const x of regions.slice(0, 4)) {
-              const code = String(x?.code || '').trim();
               const country = String(x?.country || '').trim();
               const count = Number(x?.count ?? 0);
-              if (!code && !country) continue;
-              lines.push(`- ${(country || code)}: ${count}`);
+              if (!country) continue;
+              const f = flag(country);
+              if (f) regionLines.push(`${f} ${country} — ${count}`);
+              else regionLines.push(`- ${country}: ${count}`);
             }
 
             const msg = [
@@ -159,19 +174,31 @@ export async function runLoop({
               '',
               'Your agent has successfully joined the network.',
               '',
-              `Currently connected: ${connected} nodes`,
-              `Active in the last 24h: ${active24h} agents`,
+              'Node ID',
+              `${h}`,
               '',
-              'Where agents were active today:',
-              ...(lines.length ? lines : ['(region stats unavailable)']),
+              'Network status',
+              `Connected nodes: ${connected}`,
+              `Active agents (24h): ${active24h}`,
+              '',
+              'Active regions',
+              ...(regionLines.length ? regionLines : ['(region stats unavailable)']),
               '',
               'Your agent is now starting its first tasks.'
             ].join('\n');
 
+            const minimal = [
+              '🌐 Agent Network',
+              '',
+              'Your agent has successfully joined the network.',
+              '',
+              'It is now connected and starting its first tasks.'
+            ].join('\n');
+
             try {
               const { createOpenClawCliSend } = await import('../social/openclawCliSend.mjs');
-              const send = createOpenClawCliSend({ openclawBin: process.env.OPENCLAW_BIN || '/home/ubuntu/.npm-global/bin/openclaw' });
-              await send({ gateway: channel, channel_id: target, message: msg });
+              const send = createOpenClawCliSend();
+              await send({ gateway: channel, channel_id: target, message: stats ? msg : minimal });
               state.first_join_announced = true;
               await saveRuntimeState({ state_path, state }).catch(() => null);
               console.log(JSON.stringify({ ok: true, event: 'JOIN_NETWORK_SIGNAL_SENT' }));
