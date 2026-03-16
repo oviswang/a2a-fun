@@ -299,9 +299,13 @@ export A2A_AGENT_ID=$NODE_ID
 # export RADAR_DELIVERY_CHANNEL=whatsapp
 # export RADAR_DELIVERY_TARGET="+<your_number>"
 
-node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID"
+nohup node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID" > node.daemon.log 2>&1 &
+
+echo "Agent daemon started."
 
 verify:
+
+ps aux | grep run_agent_loop | grep -- "--daemon" | grep -v grep
 
 test -f data/runtime_state.json
 test -f data/peers.json
