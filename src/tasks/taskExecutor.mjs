@@ -1,5 +1,6 @@
 import { nowIso } from './taskSchema.mjs';
 import { computeFingerprint, computeResultHash } from './taskDedup.mjs';
+import { executeCapabilityTaskV1 } from './taskCapabilitiesV1.mjs';
 
 async function execQuery(task) {
   const question = String(task?.input?.question || '').trim();
@@ -66,7 +67,11 @@ export async function executeTask({ task, relay_local_http } = {}) {
   if (type === 'query') res = await execQuery(task);
   else if (type === 'fetch') res = await execFetch(task);
   else if (type === 'run_check') res = await execRunCheck(task, { relay_local_http });
-  else res = { ok: false, error: { code: 'UNSUPPORTED_TASK_TYPE' } };
+  else {
+    // TASK_CAPABILITIES_V1
+    const cap = await executeCapabilityTaskV1({ task, relay_local_http, workspace_path: process.env.A2A_WORKSPACE_PATH || process.cwd() });
+    res = cap;
+  }
 
   // Compute result_hash on successful completion
   try {

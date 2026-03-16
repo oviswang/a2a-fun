@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-export const TASK_TYPES = ['query', 'fetch', 'run_check'];
+export const TASK_TYPES = ['query', 'fetch', 'run_check', 'web_research', 'extract_structured_data', 'node_diagnose'];
 export const TASK_STATES = ['published', 'accepted', 'running', 'completed', 'failed', 'expired'];
 
 export function nowIso() {
