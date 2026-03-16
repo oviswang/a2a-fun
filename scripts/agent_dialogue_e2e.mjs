@@ -7,6 +7,7 @@ import { extractAgentPersona } from '../src/social/agentPersona.mjs';
 import { runAgentDialogue } from '../src/social/agentDialogueRunner.mjs';
 import { saveAgentDialogueTranscript } from '../src/social/agentDialogueTranscript.mjs';
 import { collectAgentEnvironmentReport } from '../src/social/agentEnvironmentReport.mjs';
+import { checkPeerRelayHealth } from '../src/social/checkPeerRelayHealth.mjs';
 
 function parseArgs(argv) {
   const out = {};
@@ -97,6 +98,29 @@ const clientB = createRelayClient({
 
 await clientA.connect();
 await clientB.connect();
+
+// Minimal preflight gate (peer relay health)
+// - healthy: allow
+// - degraded: allow with warning
+// - unknown/unhealthy: block
+try {
+  const relay_local_http = process.env.RELAY_LOCAL_HTTP || 'http://127.0.0.1:18884';
+  let traces = [];
+  try {
+    const r = await fetch(`${relay_local_http}/traces`);
+    const j = await r.json();
+    traces = Array.isArray(j?.traces) ? j.traces : [];
+  } catch {}
+
+  const healthB = await checkPeerRelayHealth({ node_id: bId, relay_local_http, traces });
+  if (healthB.relay_health === 'unknown' || healthB.relay_health === 'unhealthy') {
+    console.log(JSON.stringify({ ok: true, event: 'PEER_RELAY_NOT_READY', node_id: bId, relay_health: healthB.relay_health }));
+    process.exit(3);
+  }
+  if (healthB.relay_health === 'degraded') {
+    console.log(JSON.stringify({ ok: true, event: 'PEER_RELAY_HEALTH_DEGRADED_BUT_ALLOWED', node_id: bId }));
+  }
+} catch {}
 
 const pa = await extractAgentPersona({ workspace_path: aWorkspace, agent_id: aId });
 const pb = await extractAgentPersona({ workspace_path: bWorkspace, agent_id: bId });
