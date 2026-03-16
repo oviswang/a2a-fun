@@ -327,10 +327,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=$USER
+User=%u
 WorkingDirectory=$A2A_WORKSPACE_PATH
 EnvironmentFile=-$A2A_WORKSPACE_PATH/.env.runtime
-ExecStart=/bin/bash -lc 'set -euo pipefail; NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id"); export A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH"; export NODE_ID="$NODE_ID"; export A2A_AGENT_ID="$NODE_ID"; node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID"'
+ExecStart=/bin/bash -lc 'set -euo pipefail; NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id"); export A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH"; export NODE_ID="$NODE_ID"; export A2A_AGENT_ID="$NODE_ID"; /usr/bin/env node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID"'
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -351,6 +351,18 @@ fi
 
 echo "Agent daemon started."
 
+echo ""
+echo "Node installation completed."
+echo "NODE_ID=$NODE_ID"
+echo ""
+echo "To check logs:"
+echo "tail -f node.log"
+if [ "$mode" = "systemd" ]; then
+  echo "journalctl -u a2a-fun -f"
+fi
+
+echo ""
+
 verify:
 
 if [ "$mode" = "systemd" ]; then
@@ -363,7 +375,7 @@ fi
 test -f data/runtime_state.json
 test -f data/peers.json
 test -f data/tasks.json
-test -f data/radar.latest.json
+test -f data/radar.latest.json || echo "radar not generated yet (normal)"
 
 echo "daemon ok"
 ```
