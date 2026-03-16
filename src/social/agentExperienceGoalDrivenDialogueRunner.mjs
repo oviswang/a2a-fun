@@ -8,6 +8,7 @@ import { selectRelevantPeer } from '../attention/selectRelevantPeer.mjs';
 import { buildConversationGoal } from './buildConversationGoal.mjs';
 import { explainConversationGoal } from './explainConversationGoal.mjs';
 import { queryExperienceGraph } from '../experience/queryExperienceGraph.mjs';
+import { deriveDecisionFromExperience } from '../experience/deriveDecisionFromExperience.mjs';
 import { buildExperienceContext } from '../experience/buildExperienceContext.mjs';
 import { evaluateExperienceFeedback } from '../experience/evaluateExperienceFeedback.mjs';
 import { applyConfidenceFeedback } from '../experience/applyConfidenceFeedback.mjs';
@@ -76,8 +77,11 @@ export async function runGoalDrivenExperienceDialogue({
 
   // Optional: query cumulative experience graph for the goal topic
   const experience = await queryExperienceGraph({ topic: goalOut.goal.topic, workspace_path: ws }).catch(() => null);
+  const decision = experience && experience.ok
+    ? deriveDecisionFromExperience({ topic: experience.topic, knowledge: experience.knowledge })
+    : { topic: goalOut.goal.topic, decisions: [] };
   const experience_context = experience && experience.ok
-    ? buildExperienceContext({ topic: experience.topic, knowledge: experience.knowledge })
+    ? buildExperienceContext({ topic: experience.topic, knowledge: experience.knowledge, decisions: decision.decisions })
     : null;
 
   const dialogue_id = `gx:${crypto.randomUUID()}`;
@@ -194,6 +198,7 @@ export async function runGoalDrivenExperienceDialogue({
     conversation_goal_explanation: exp.text,
     experience_graph: experience && experience.ok ? { topic: experience.topic, records_count: experience.records_count, knowledge: experience.knowledge } : null,
     experience_context,
+    experience_decisions: decision?.decisions || [],
     knowledge_used: !!(experience && experience.ok && experience.records_count > 0),
     new_experience_summary: new_summary,
     experience_feedback,

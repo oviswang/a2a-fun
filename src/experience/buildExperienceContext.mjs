@@ -24,7 +24,7 @@ function addLines(lines, title, items, maxItems) {
   lines.push('');
 }
 
-export function buildExperienceContext({ topic = '', knowledge } = {}) {
+export function buildExperienceContext({ topic = '', knowledge, decisions } = {}) {
   const tp = String(topic || '').trim();
   const k = knowledge && typeof knowledge === 'object' ? knowledge : {};
 
@@ -37,6 +37,13 @@ export function buildExperienceContext({ topic = '', knowledge } = {}) {
   addLines(lines, 'Known failure patterns:', k.what_failed, 3);
   addLines(lines, 'Tools / workflow hints:', k.tools_workflow, 3);
   addLines(lines, 'Suggested safeguards:', k.next_step, 2);
+
+  const ds = Array.isArray(decisions) ? decisions.filter((x) => typeof x === 'string').map((s) => s.trim()).filter(Boolean) : [];
+  if (ds.length) {
+    lines.push('DECISION_HINTS');
+    for (const d of ds.slice(0, 3)) lines.push(`- ${d}`);
+    lines.push('');
+  }
 
   lines.push('Guideline:');
   lines.push('Use these observations as prior operational experience when reasoning.');
