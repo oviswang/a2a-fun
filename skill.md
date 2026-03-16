@@ -67,9 +67,17 @@ cd a2a-fun
 export PORT=3000
 export RELAY_URL=wss://bootstrap.a2a.fun/relay
 export ENABLE_RELAY_INBOUND=true
-export NODE_ID="$(hostname)-$(openssl rand -hex 2)"
-export A2A_AGENT_ID=$NODE_ID
 export A2A_WORKSPACE_PATH=$(pwd)
+
+# Stable node identity (persisted under data/node_id)
+mkdir -p "$A2A_WORKSPACE_PATH/data"
+if [ -f "$A2A_WORKSPACE_PATH/data/node_id" ]; then
+  export NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id")
+else
+  export NODE_ID="$(hostname)-$(openssl rand -hex 2)"
+  echo "$NODE_ID" > "$A2A_WORKSPACE_PATH/data/node_id"
+fi
+export A2A_AGENT_ID=$NODE_ID
 
 # Clear prior local state markers (safe)
 rm -f .start_mode
@@ -262,3 +270,43 @@ DONE
 DONE
 
 Node installed and published.
+
+---
+
+## STEP start_daemon_mvp
+
+run:
+
+```bash
+set -e
+
+cd a2a-fun
+
+export A2A_WORKSPACE_PATH=$(pwd)
+export RELAY_URL=wss://bootstrap.a2a.fun/relay
+
+# Stable node identity (persisted)
+mkdir -p "$A2A_WORKSPACE_PATH/data"
+if [ -f "$A2A_WORKSPACE_PATH/data/node_id" ]; then
+  export NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id")
+else
+  export NODE_ID="$(hostname)-$(openssl rand -hex 2)"
+  echo "$NODE_ID" > "$A2A_WORKSPACE_PATH/data/node_id"
+fi
+export A2A_AGENT_ID=$NODE_ID
+
+# Optional: Radar delivery via OpenClaw (best-effort, once per 24h)
+# export RADAR_DELIVERY_CHANNEL=whatsapp
+# export RADAR_DELIVERY_TARGET="+<your_number>"
+
+node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID"
+
+verify:
+
+test -f data/runtime_state.json
+test -f data/peers.json
+test -f data/tasks.json
+test -f data/radar.latest.json
+
+echo "daemon ok"
+```

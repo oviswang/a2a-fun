@@ -55,7 +55,8 @@ export async function loadRuntimeState({ state_path } = {}) {
         last_task_sync_request_at: null,
         last_task_generation_at: null,
         last_experience_aggregation_at: null,
-        last_radar_generation_at: null
+        last_radar_generation_at: null,
+        last_radar_delivery_at: null
       }
     };
   }
@@ -153,6 +154,24 @@ export async function runLoop({
               await writeJsonAtomic(outRadar, radar);
               state.last_radar_generation_at = nowIso();
               await saveRuntimeState({ state_path, state }).catch(() => null);
+
+              // Minimal radar delivery via OpenClaw CLI (best-effort, once per 24h)
+              const deliverDue = due24h(state.last_radar_delivery_at);
+              if (deliverDue) {
+                try {
+                  const channel = (process.env.RADAR_DELIVERY_CHANNEL || '').trim();
+                  const target = (process.env.RADAR_DELIVERY_TARGET || '').trim();
+                  if (channel && target) {
+                    const { createOpenClawCliSend } = await import('../social/openclawCliSend.mjs');
+                    const send = createOpenClawCliSend({ openclawBin: process.env.OPENCLAW_BIN || 'openclaw' });
+                    const lines = (radar.stories || []).map((s) => `- ${String(s.story || '').trim()}`).filter(Boolean);
+                    const msg = [`Daily Radar (${radar.date || ''})`, ...lines].join('\n');
+                    await send({ gateway: channel, channel_id: target, message: msg });
+                    state.last_radar_delivery_at = nowIso();
+                    await saveRuntimeState({ state_path, state }).catch(() => null);
+                  }
+                } catch {}
+              }
             }
           }
         }

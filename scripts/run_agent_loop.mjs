@@ -21,6 +21,32 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv);
 const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
 
+// v0.1 stable node identity: persist NODE_ID under workspace data/node_id
+try {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+
+  const p = path.join(workspace_path, 'data', 'node_id');
+  await fs.mkdir(path.dirname(p), { recursive: true });
+
+  const existing = await fs.readFile(p, 'utf8').catch(() => null);
+  const stable = existing && String(existing).trim() ? String(existing).trim() : null;
+
+  let nodeId = (process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim();
+  if (!nodeId && stable) nodeId = stable;
+
+  if (nodeId && !stable) {
+    await fs.writeFile(p, nodeId + '\n', 'utf8');
+  }
+
+  if (!nodeId && stable) nodeId = stable;
+
+  if (nodeId) {
+    process.env.NODE_ID = nodeId;
+    process.env.A2A_AGENT_ID = nodeId;
+  }
+} catch {}
+
 const out = await runLoop({
   workspace_path,
   once: args.once,
