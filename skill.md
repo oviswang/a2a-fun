@@ -31,7 +31,7 @@ fi
 
 cd a2a-fun
 
-A2A_VERSION=v0.1.0
+A2A_VERSION=v0.1.1
 
 git fetch --tags origin
 
