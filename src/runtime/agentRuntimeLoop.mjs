@@ -52,7 +52,10 @@ export async function loadRuntimeState({ state_path } = {}) {
         last_task_executed_at: null,
         last_loop_tick_at: null,
         current_mode: null,
-        last_task_sync_request_at: null
+        last_task_sync_request_at: null,
+        last_task_generation_at: null,
+        last_experience_aggregation_at: null,
+        last_radar_generation_at: null
       }
     };
   }
@@ -108,6 +111,13 @@ export async function runLoop({
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const rand = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
 
+  const due24h = (iso) => {
+    if (!iso) return true;
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return true;
+    return (Date.now() - t) >= 24 * 60 * 60 * 1000;
+  };
+
   const doOneTick = async () => {
     try {
       state.last_loop_tick_at = nowIso();
@@ -115,6 +125,38 @@ export async function runLoop({
 
       // Failure recovery: reclaim expired/orphaned tasks (every tick)
       await recoverStuckTasks({ workspace_path: ws }).catch(() => null);
+
+      // MVP automation wiring (daily): task generation -> aggregation -> radar
+      try {
+        const dailyDue = due24h(state.last_task_generation_at);
+        if (daemon && dailyDue) {
+          const { generateTasksOnce } = await import('../tasks/taskGenerator.mjs');
+          const gen = await generateTasksOnce({ workspace_path: ws, node_id: h, cadence: '24h', max_per_run: 3 }).catch(() => null);
+          if (gen && gen.ok) state.last_task_generation_at = nowIso();
+          await saveRuntimeState({ state_path, state }).catch(() => null);
+        }
+
+        const aggDue = due24h(state.last_experience_aggregation_at);
+        if (daemon && aggDue) {
+          const { aggregateExperience } = await import('../experience/experienceAggregator.mjs');
+          const agg = await aggregateExperience({ workspace_path: ws, window: 'last_24h' }).catch(() => null);
+          if (agg && agg.ok) {
+            const outAgg = path.join(ws, 'data', 'experience_aggregate.latest.json');
+            await writeJsonAtomic(outAgg, agg);
+            state.last_experience_aggregation_at = nowIso();
+            await saveRuntimeState({ state_path, state }).catch(() => null);
+
+            const { generateRadar } = await import('../observability/radarGenerator.mjs');
+            const radar = await generateRadar({ aggregate: agg }).catch(() => null);
+            if (radar && radar.ok) {
+              const outRadar = path.join(ws, 'data', 'radar.latest.json');
+              await writeJsonAtomic(outRadar, radar);
+              state.last_radar_generation_at = nowIso();
+              await saveRuntimeState({ state_path, state }).catch(() => null);
+            }
+          }
+        }
+      } catch {}
 
       // A) discover peers (every 30s)
       const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.last_peer_refresh_at)) >= 30000;
