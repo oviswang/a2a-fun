@@ -21,28 +21,63 @@ async function readJson(path) {
   return JSON.parse(raw);
 }
 
+function titleCase(s) {
+  const x = safeStr(s);
+  if (!x) return x;
+  return x.replace(/_/g, ' ');
+}
+
+function describeTaskContext(ev) {
+  const ctx = ev?.context && typeof ev.context === 'object' ? ev.context : {};
+  const type = safeStr(ctx.task_type);
+  const input = ctx.task_input && typeof ctx.task_input === 'object' ? ctx.task_input : null;
+
+  const parts = [];
+  if (type) parts.push(titleCase(type));
+
+  if (input) {
+    const check = safeStr(input.check);
+    const question = safeStr(input.question);
+    if (check) parts.push(`${titleCase(check)} checks`);
+    else if (question) parts.push(`research: ${question}`);
+  }
+
+  return parts.length ? parts.join(' via ') : null;
+}
+
 function storyFromEvent(ev) {
   const type = safeStr(ev?.type);
   const topic = safeStr(ev?.topic) || 'unknown';
   const actors = uniq(ev?.actors);
   const n = actors.length || 1;
+  const ctx = describeTaskContext(ev);
+  const topicHuman = titleCase(topic);
 
   if (type === 'confirmation') {
-    return `${n} agents confirmed ${topic}`;
+    return ctx
+      ? `${n} agents independently confirmed ${topicHuman} after multiple task executions (${ctx}).`
+      : `${n} agents independently confirmed ${topicHuman} after multiple task executions.`;
   }
   if (type === 'investigation') {
-    return `${n} agents investigated ${topic}`;
+    return ctx
+      ? `${n} agents spent the day investigating ${topicHuman} (${ctx}).`
+      : `${n} agents spent the day investigating ${topicHuman}.`;
   }
   if (type === 'anomaly') {
-    return `${n} agents reported anomalies related to ${topic}`;
+    return ctx
+      ? `${n} agents reported unusual failures related to ${topicHuman} (${ctx}).`
+      : `${n} agents reported unusual failures related to ${topicHuman}.`;
   }
   if (type === 'discovery') {
     const actor = actors[0] || '1 agent';
-    return `${actor} discovered a new finding related to ${topic}`;
+    return ctx
+      ? `${actor} discovered a new observation while working on ${topicHuman} (${ctx}).`
+      : `${actor} discovered a new observation while working on ${topicHuman}.`;
   }
 
-  // fallback (machine-safe, still readable)
-  return `${n} agents reported ${type || 'activity'} related to ${topic}`;
+  return ctx
+    ? `${n} agents reported ${type || 'activity'} related to ${topicHuman} (${ctx}).`
+    : `${n} agents reported ${type || 'activity'} related to ${topicHuman}.`;
 }
 
 export async function generateRadar({
@@ -61,22 +96,33 @@ export async function generateRadar({
 
   const events = Array.isArray(agg.events) ? agg.events : [];
 
-  const stories = events
+  const storiesAll = events
     .map((ev) => ({
       type: safeStr(ev?.type) || null,
       topic: safeStr(ev?.topic) || null,
       actors: uniq(ev?.actors),
+      context: {
+        task_type: safeStr(ev?.context?.task_type) || null,
+        task_input: ev?.context?.task_input && typeof ev.context.task_input === 'object' ? ev.context.task_input : null
+      },
       story: storyFromEvent(ev)
     }))
     .filter((x) => safeStr(x.story));
 
-  // stable sort: topic then type
-  stories.sort((a, b) => {
+  const prio = { anomaly: 0, discovery: 1, confirmation: 2, investigation: 3 };
+
+  // selection rules: prioritize anomaly -> discovery -> confirmation -> investigation, limit 5
+  storiesAll.sort((a, b) => {
+    const pa = prio[safeStr(a.type)] ?? 9;
+    const pb = prio[safeStr(b.type)] ?? 9;
+    if (pa !== pb) return pa - pb;
     const ta = safeStr(a.topic);
     const tb = safeStr(b.topic);
     if (ta !== tb) return ta.localeCompare(tb);
-    return safeStr(a.type).localeCompare(safeStr(b.type));
+    return safeStr(a.story).localeCompare(safeStr(b.story));
   });
+
+  const stories = storiesAll.slice(0, 5);
 
   return {
     ok: true,

@@ -103,6 +103,10 @@ export async function aggregateExperience({
         type: 'confirmation',
         topic,
         actors,
+        context: {
+          task_type: safeStr(list[0]?.type) || null,
+          task_input: list[0]?.input && typeof list[0].input === 'object' ? list[0].input : null
+        },
         summary: `${actors.length} agents confirmed ${topic} with ${okCount} completed tasks`
       });
       continue;
@@ -115,6 +119,10 @@ export async function aggregateExperience({
         type: 'anomaly',
         topic,
         actors,
+        context: {
+          task_type: safeStr(list[0]?.type) || null,
+          task_input: list[0]?.input && typeof list[0].input === 'object' ? list[0].input : null
+        },
         summary: `${failCount} repeated failures on ${topic}`,
         details: {
           failures: failCount,
@@ -130,6 +138,10 @@ export async function aggregateExperience({
         type: 'investigation',
         topic,
         actors,
+        context: {
+          task_type: safeStr(list[0]?.type) || null,
+          task_input: list[0]?.input && typeof list[0].input === 'object' ? list[0].input : null
+        },
         summary: `${actors.length} agents investigated ${topic} (${list.length} completed tasks)`
       });
       continue;
@@ -140,6 +152,10 @@ export async function aggregateExperience({
       type: 'discovery',
       topic,
       actors,
+      context: {
+        task_type: safeStr(list[0]?.type) || null,
+        task_input: list[0]?.input && typeof list[0].input === 'object' ? list[0].input : null
+      },
       summary: `${actors[0] || '1 agent'} recorded a new finding on ${topic}`
     });
   }
