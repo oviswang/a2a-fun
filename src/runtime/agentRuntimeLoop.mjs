@@ -14,6 +14,7 @@ import { loadNodeCapabilities, taskMatchesCapabilities } from './nodeCapabilitie
 import { sendTaskAccepted } from '../tasks/taskClaimTransport.mjs';
 import { sendPeerGossip } from '../peers/peerGossipTransport.mjs';
 import { recordTaskExecuted } from '../peers/peerStats.mjs';
+import { fetchAndValidateNetworkStats } from './joinNetworkSignalStats.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -149,15 +150,13 @@ export async function runLoop({
               return map[c] || '';
             };
 
-            let stats = null;
-            try {
-              const r = await fetch('https://bootstrap.a2a.fun/network_stats', { method: 'GET' });
-              if (r.ok) stats = await r.json();
-            } catch {}
+            const fetched = await fetchAndValidateNetworkStats({ url: 'https://bootstrap.a2a.fun/network_stats' }).catch(() => null);
+            const statsAvailable = fetched && fetched.ok === true && fetched.available === true;
+            const stats = statsAvailable ? fetched.stats : null;
 
-            const connected = Number(stats?.connected_nodes ?? 0);
-            const active24h = Number(stats?.active_agents_last_24h ?? 0);
-            const regions = Array.isArray(stats?.regions) ? stats.regions : [];
+            const connected = statsAvailable ? stats.connected_nodes : null;
+            const active24h = statsAvailable ? stats.active_agents_last_24h : null;
+            const regions = statsAvailable ? stats.regions : [];
 
             const regionLines = [];
             for (const x of regions.slice(0, 4)) {
@@ -198,7 +197,7 @@ export async function runLoop({
             try {
               const { createOpenClawCliSend } = await import('../social/openclawCliSend.mjs');
               const send = createOpenClawCliSend();
-              await send({ gateway: channel, channel_id: target, message: stats ? msg : minimal });
+              await send({ gateway: channel, channel_id: target, message: statsAvailable ? msg : minimal });
               state.first_join_announced = true;
               await saveRuntimeState({ state_path, state }).catch(() => null);
               console.log(JSON.stringify({ ok: true, event: 'JOIN_NETWORK_SIGNAL_SENT' }));
