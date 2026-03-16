@@ -7,6 +7,7 @@ import { loadLocalAgentMemory, getDefaultLocalAgentMemoryPath } from '../memory/
 import { selectRelevantPeer } from '../attention/selectRelevantPeer.mjs';
 import { buildConversationGoal } from './buildConversationGoal.mjs';
 import { explainConversationGoal } from './explainConversationGoal.mjs';
+import { queryExperienceGraph } from '../experience/queryExperienceGraph.mjs';
 
 import { listPublishedAgentsRemote } from '../discovery/sharedAgentDirectoryClient.mjs';
 import { resolveLivePeerId } from './resolveLivePeerId.mjs';
@@ -69,6 +70,9 @@ export async function runGoalDrivenExperienceDialogue({
   const goalOut = buildConversationGoal({ attention_snapshot: snapOut.snapshot, selected_peer: sel, memory_gaps: snapOut.snapshot.memory_gaps });
   const exp = explainConversationGoal({ attention_snapshot: snapOut.snapshot, selected_peer: sel, goal: goalOut.goal });
   if (goalOut.goal.intent !== 'experience_exchange') return { ok: false, error: { code: 'INTENT_NOT_EXPERIENCE_EXCHANGE' } };
+
+  // Optional: query cumulative experience graph for the goal topic (for reasoning/logging only)
+  const experience = await queryExperienceGraph({ topic: goalOut.goal.topic, workspace_path: ws }).catch(() => null);
 
   const dialogue_id = `gx:${crypto.randomUUID()}`;
   const inbox = [];
@@ -153,6 +157,7 @@ export async function runGoalDrivenExperienceDialogue({
     peer_relay_health: { relay_health: health.relay_health, findings: health.findings },
     conversation_goal: goalOut.goal,
     conversation_goal_explanation: exp.text,
+    experience_graph: experience && experience.ok ? { topic: experience.topic, records_count: experience.records_count, knowledge: experience.knowledge } : null,
     turns
   };
 
