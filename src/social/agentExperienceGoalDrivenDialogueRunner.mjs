@@ -10,6 +10,7 @@ import { explainConversationGoal } from './explainConversationGoal.mjs';
 import { queryExperienceGraph } from '../experience/queryExperienceGraph.mjs';
 import { buildExperienceContext } from '../experience/buildExperienceContext.mjs';
 import { evaluateExperienceFeedback } from '../experience/evaluateExperienceFeedback.mjs';
+import { applyConfidenceFeedback } from '../experience/applyConfidenceFeedback.mjs';
 
 import { listPublishedAgentsRemote } from '../discovery/sharedAgentDirectoryClient.mjs';
 import { resolveLivePeerId } from './resolveLivePeerId.mjs';
@@ -167,6 +168,16 @@ export async function runGoalDrivenExperienceDialogue({
     injected_knowledge,
     new_summary
   });
+
+  // Apply deterministic confidence updates back into the graph (best-effort)
+  if (experience && experience.ok && experience.graph_path) {
+    await applyConfidenceFeedback({
+      graph_path: experience.graph_path,
+      topic: goalOut.goal.topic,
+      feedback: experience_feedback,
+      new_summary
+    }).catch(() => null);
+  }
 
   const payload = {
     ok: true,

@@ -8,17 +8,33 @@ function normKey(s) {
     .replace(/\s+/g, ' ');
 }
 
-function uniqNorm(list, limitN) {
+function uniqNormWithScore(list, limitN) {
+  // Accept legacy strings or { text, confidence_score }
+  const items = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    if (typeof item === 'string') {
+      const text = item.trim();
+      if (text) items.push({ text, confidence_score: 0.5 });
+      continue;
+    }
+    if (item && typeof item === 'object' && typeof item.text === 'string') {
+      const text = item.text.trim();
+      if (!text) continue;
+      const cs = typeof item.confidence_score === 'number' ? item.confidence_score : 0.5;
+      items.push({ text, confidence_score: cs });
+    }
+  }
+
+  // Sort by confidence_score desc, stable-ish by text key
+  items.sort((a, b) => (b.confidence_score - a.confidence_score) || (normKey(a.text) < normKey(b.text) ? -1 : 1));
+
   const out = [];
   const seen = new Set();
-  for (const item of Array.isArray(list) ? list : []) {
-    if (typeof item !== 'string') continue;
-    const raw = item.trim();
-    if (!raw) continue;
-    const k = normKey(raw);
-    if (seen.has(k)) continue;
+  for (const it of items) {
+    const k = normKey(it.text);
+    if (!k || seen.has(k)) continue;
     seen.add(k);
-    out.push(raw);
+    out.push({ text: it.text, confidence_score: it.confidence_score });
     if (typeof limitN === 'number' && out.length >= limitN) break;
   }
   return out;
@@ -53,10 +69,10 @@ export async function queryExperienceGraph({ topic, graph_path, workspace_path }
   const records = Array.isArray(bucket?.records) ? bucket.records : [];
 
   const knowledge = {
-    what_worked: uniqNorm(records.flatMap((r) => r?.what_worked || []), 5),
-    what_failed: uniqNorm(records.flatMap((r) => r?.what_failed || []), 5),
-    tools_workflow: uniqNorm(records.flatMap((r) => r?.tools_workflow || []), 5),
-    next_step: uniqNorm(records.flatMap((r) => r?.next_step || []), 3)
+    what_worked: uniqNormWithScore(records.flatMap((r) => r?.what_worked || []), 5),
+    what_failed: uniqNormWithScore(records.flatMap((r) => r?.what_failed || []), 5),
+    tools_workflow: uniqNormWithScore(records.flatMap((r) => r?.tools_workflow || []), 5),
+    next_step: uniqNormWithScore(records.flatMap((r) => r?.next_step || []), 3)
   };
 
   const out = { ok: true, topic: tp, records_count: records.length, knowledge, graph_path: gp };

@@ -12,7 +12,21 @@ function safeStr(s) {
 }
 
 function arr(v) {
-  return Array.isArray(v) ? v.filter((x) => typeof x === 'string').map((s) => s.trim()).filter(Boolean) : [];
+  // Accept legacy string arrays and new object arrays: { text, confidence_score }
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  for (const item of v) {
+    if (typeof item === 'string') {
+      const t = item.trim();
+      if (t) out.push(t);
+      continue;
+    }
+    if (item && typeof item === 'object' && typeof item.text === 'string') {
+      const t = item.text.trim();
+      if (t) out.push(t);
+    }
+  }
+  return out;
 }
 
 export function validateExperienceSummary(obj) {
@@ -72,6 +86,21 @@ export async function ingestExperienceSummary({
     return { ok: true, deduped: true, graph_path: gp, topic: tp, dialogue_id: did };
   }
 
+  // If graph already has fragment objects for this topic, preserve existing scores when the same text reappears.
+  const existingScoreByText = new Map();
+  for (const r of records) {
+    for (const field of ['what_worked', 'what_failed', 'tools_workflow', 'next_step']) {
+      const list = Array.isArray(r?.[field]) ? r[field] : [];
+      for (const it of list) {
+        if (!it || typeof it !== 'object' || typeof it.text !== 'string') continue;
+        const t = it.text.trim();
+        if (!t) continue;
+        const cs = typeof it.confidence_score === 'number' ? it.confidence_score : 0.5;
+        if (!existingScoreByText.has(t)) existingScoreByText.set(t, cs);
+      }
+    }
+  }
+
   const cleaned = cleanExperienceSummary({
     what_worked: v.summary.what_worked,
     what_failed: v.summary.what_failed_or_risk,
@@ -84,13 +113,15 @@ export async function ingestExperienceSummary({
   const stripped = stripExperiencePrefixes(filtered);
   const classified = classifyExperienceSummary(stripped);
 
+  const wrap = (list) => list.map((text) => ({ text, confidence_score: existingScoreByText.get(text) ?? 0.5 }));
+
   const rec = {
     dialogue_id: did,
     source_nodes: Array.isArray(source_nodes) ? source_nodes.map(safeStr).filter(Boolean) : [],
-    what_worked: classified.what_worked,
-    what_failed: classified.what_failed,
-    tools_workflow: classified.tools_workflow,
-    next_step: classified.next_step,
+    what_worked: wrap(classified.what_worked),
+    what_failed: wrap(classified.what_failed),
+    tools_workflow: wrap(classified.tools_workflow),
+    next_step: wrap(classified.next_step),
     timestamp: safeStr(timestamp) || new Date().toISOString(),
     source_summary_path: sp
   };

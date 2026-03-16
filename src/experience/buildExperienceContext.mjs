@@ -1,5 +1,19 @@
 function safeList(v) {
-  return Array.isArray(v) ? v.filter((x) => typeof x === 'string').map((s) => s.trim()).filter(Boolean) : [];
+  // Accept either string[] or {text, confidence_score}[]
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  for (const item of v) {
+    if (typeof item === 'string') {
+      const t = item.trim();
+      if (t) out.push(t);
+      continue;
+    }
+    if (item && typeof item === 'object' && typeof item.text === 'string') {
+      const t = item.text.trim();
+      if (t) out.push(t);
+    }
+  }
+  return out;
 }
 
 function addLines(lines, title, items, maxItems) {
