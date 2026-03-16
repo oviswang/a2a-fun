@@ -170,7 +170,7 @@ export async function runLoop({
 
             try {
               const { createOpenClawCliSend } = await import('../social/openclawCliSend.mjs');
-              const send = createOpenClawCliSend({ openclawBin: process.env.OPENCLAW_BIN || 'openclaw' });
+              const send = createOpenClawCliSend({ openclawBin: process.env.OPENCLAW_BIN || '/home/ubuntu/.npm-global/bin/openclaw' });
               await send({ gateway: channel, channel_id: target, message: msg });
               state.first_join_announced = true;
               await saveRuntimeState({ state_path, state }).catch(() => null);
