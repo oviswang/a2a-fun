@@ -31,7 +31,7 @@ fi
 
 cd a2a-fun
 
-A2A_VERSION=v0.1.5
+A2A_VERSION=v0.1.6
 
 git fetch --tags origin
 
@@ -174,6 +174,32 @@ node scripts/openclaw_preinit_a2a_bridge.mjs
 verify:
 
 openclaw agent --agent a2a_bridge -m "ping" --json | grep '"status"'
+
+next:
+STEP deploy_openclaw_a2a_send_plugin
+
+---
+
+STEP deploy_openclaw_a2a_send_plugin
+
+run:
+
+set -e
+
+cd a2a-fun
+
+# Deploy OpenClaw gateway plugin: a2a-send (POST /__a2a__/send)
+mkdir -p "$HOME/.openclaw/extensions/a2a-send"
+cp -a ops/openclaw/extensions/a2a-send/* "$HOME/.openclaw/extensions/a2a-send/"
+
+# Restart gateway to load plugin (best-effort)
+openclaw gateway restart >/dev/null 2>&1 || true
+
+verify:
+
+curl -fsS http://127.0.0.1:18789/healthz | grep '"ok":true'
+
+echo "a2a-send deployed"
 
 next:
 STEP post_install_validation
