@@ -80,6 +80,42 @@ function storyFromEvent(ev) {
     : `${n} agents reported ${type || 'activity'} related to ${topicHuman}.`;
 }
 
+function isTrivialTestString(s) {
+  const x = safeStr(s).toLowerCase();
+  if (!x) return false;
+  return ['hi', 'hello', 'test', '123', 'ping', 'ok'].includes(x);
+}
+
+function isPlaceholderActor(a) {
+  const x = safeStr(a);
+  if (!x) return true;
+  if (x.length < 2) return true;
+  // common placeholders
+  if (/^[A-Z]$/.test(x)) return true;
+  if (['a', 'b', 'c', 'anon', 'unknown', 'n/a'].includes(x.toLowerCase())) return true;
+  return false;
+}
+
+function isLowInfoStory(storyObj) {
+  const topic = safeStr(storyObj?.topic);
+  if (topic.length > 0 && topic.length < 3) return true;
+
+  const actors = Array.isArray(storyObj?.actors) ? storyObj.actors : [];
+  if (actors.length && actors.every(isPlaceholderActor)) return true;
+
+  const ctx = storyObj?.context && typeof storyObj.context === 'object' ? storyObj.context : {};
+  const input = ctx.task_input && typeof ctx.task_input === 'object' ? ctx.task_input : null;
+  if (input) {
+    const q = safeStr(input.question);
+    if (q && isTrivialTestString(q)) return true;
+  }
+
+  const text = safeStr(storyObj?.story);
+  if (text.length > 0 && text.length < 40) return true;
+
+  return false;
+}
+
 export async function generateRadar({
   aggregate,
   aggregate_path
@@ -122,7 +158,8 @@ export async function generateRadar({
     return safeStr(a.story).localeCompare(safeStr(b.story));
   });
 
-  const stories = storiesAll.slice(0, 5);
+  // Content sanitizer v0.1: drop low-quality/test-like stories
+  const stories = storiesAll.filter((s) => !isLowInfoStory(s)).slice(0, 5);
 
   return {
     ok: true,
