@@ -8,6 +8,7 @@ import { selectRelevantPeer } from '../attention/selectRelevantPeer.mjs';
 import { buildConversationGoal } from './buildConversationGoal.mjs';
 import { explainConversationGoal } from './explainConversationGoal.mjs';
 import { queryExperienceGraph } from '../experience/queryExperienceGraph.mjs';
+import { buildExperienceContext } from '../experience/buildExperienceContext.mjs';
 
 import { listPublishedAgentsRemote } from '../discovery/sharedAgentDirectoryClient.mjs';
 import { resolveLivePeerId } from './resolveLivePeerId.mjs';
@@ -71,8 +72,11 @@ export async function runGoalDrivenExperienceDialogue({
   const exp = explainConversationGoal({ attention_snapshot: snapOut.snapshot, selected_peer: sel, goal: goalOut.goal });
   if (goalOut.goal.intent !== 'experience_exchange') return { ok: false, error: { code: 'INTENT_NOT_EXPERIENCE_EXCHANGE' } };
 
-  // Optional: query cumulative experience graph for the goal topic (for reasoning/logging only)
+  // Optional: query cumulative experience graph for the goal topic
   const experience = await queryExperienceGraph({ topic: goalOut.goal.topic, workspace_path: ws }).catch(() => null);
+  const experience_context = experience && experience.ok
+    ? buildExperienceContext({ topic: experience.topic, knowledge: experience.knowledge })
+    : null;
 
   const dialogue_id = `gx:${crypto.randomUUID()}`;
   const inbox = [];
@@ -99,6 +103,7 @@ export async function runGoalDrivenExperienceDialogue({
   const toId = res.resolved_peer_id;
 
   const t1Text = [
+    ...(experience_context ? [experience_context, '', 'CONVERSATION_GOAL'] : []),
     `Conversation goal topic: ${goalOut.goal.topic}`,
     `Intent: ${goalOut.goal.intent}`,
     `Question: ${goalOut.goal.question}`,
@@ -158,6 +163,8 @@ export async function runGoalDrivenExperienceDialogue({
     conversation_goal: goalOut.goal,
     conversation_goal_explanation: exp.text,
     experience_graph: experience && experience.ok ? { topic: experience.topic, records_count: experience.records_count, knowledge: experience.knowledge } : null,
+    experience_context,
+    knowledge_used: !!(experience && experience.ok && experience.records_count > 0),
     turns
   };
 
