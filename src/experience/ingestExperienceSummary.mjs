@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { cleanExperienceSummary } from './cleanExperienceSummary.mjs';
+import { splitExperienceSummary } from './splitExperienceSummary.mjs';
 import { classifyExperienceSummary } from './classifyExperienceSummary.mjs';
 
 function safeStr(s) {
@@ -76,7 +77,8 @@ export async function ingestExperienceSummary({
     next_step: v.summary.suggested_next_step
   });
 
-  const classified = classifyExperienceSummary(cleaned);
+  const split = splitExperienceSummary(cleaned);
+  const classified = classifyExperienceSummary(split);
 
   const rec = {
     dialogue_id: did,
