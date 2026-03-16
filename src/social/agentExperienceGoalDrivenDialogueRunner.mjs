@@ -12,6 +12,7 @@ import { deriveDecisionFromExperience } from '../experience/deriveDecisionFromEx
 import { buildExperienceContext } from '../experience/buildExperienceContext.mjs';
 import { evaluateExperienceFeedback } from '../experience/evaluateExperienceFeedback.mjs';
 import { applyConfidenceFeedback } from '../experience/applyConfidenceFeedback.mjs';
+import { validateExperienceDecisions } from '../experience/validateExperienceDecisions.mjs';
 
 import { listPublishedAgentsRemote } from '../discovery/sharedAgentDirectoryClient.mjs';
 import { resolveLivePeerId } from './resolveLivePeerId.mjs';
@@ -173,6 +174,11 @@ export async function runGoalDrivenExperienceDialogue({
     new_summary
   });
 
+  const experience_decision_validation = validateExperienceDecisions({
+    decisions: decision?.decisions || [],
+    new_summary
+  });
+
   // Apply deterministic confidence updates back into the graph (best-effort)
   if (experience && experience.ok && experience.graph_path) {
     await applyConfidenceFeedback({
@@ -202,6 +208,7 @@ export async function runGoalDrivenExperienceDialogue({
     knowledge_used: !!(experience && experience.ok && experience.records_count > 0),
     new_experience_summary: new_summary,
     experience_feedback,
+    experience_decision_validation,
     turns
   };
 
