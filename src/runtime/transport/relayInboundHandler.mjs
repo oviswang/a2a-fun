@@ -5,6 +5,7 @@ import { receiveAgentExperienceDialogue } from '../../social/agentExperienceDial
 import { receiveOpenClawLiveQuery } from '../../openclaw/openclawLiveQueryReceiver.mjs';
 import { receiveTaskPublished, receiveTaskResult } from '../../tasks/taskReceiver.mjs';
 import { receiveTaskSyncRequest, receiveTaskSyncResponse } from '../../tasks/taskSync.mjs';
+import { receiveTaskAccepted } from '../../tasks/taskClaim.mjs';
 
 function isObj(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
@@ -73,6 +74,11 @@ export function createRelayInboundHandler({ workspace_path, relayUrl = null, nod
     if (payload.kind === 'A2A_TASK_SYNC_RESPONSE') {
       const res = await receiveTaskSyncResponse({ workspace_path: ws, payload });
       return { ok: res.ok === true, handled: true, kind: 'A2A_TASK_SYNC_RESPONSE', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'A2A_TASK_ACCEPTED') {
+      const res = await receiveTaskAccepted({ workspace_path: ws, payload });
+      return { ok: res.ok === true, handled: true, kind: 'A2A_TASK_ACCEPTED', error: res.ok ? null : res.error };
     }
 
     return { ok: true, handled: false, kind: payload.kind || null };

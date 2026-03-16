@@ -11,6 +11,7 @@ import { sendTaskSyncRequest } from '../tasks/taskSyncTransport.mjs';
 import { recoverStuckTasks } from '../tasks/taskRecovery.mjs';
 import { shouldSkipExecution } from '../tasks/taskDedup.mjs';
 import { loadNodeCapabilities, taskMatchesCapabilities } from './nodeCapabilities.mjs';
+import { sendTaskAccepted } from '../tasks/taskClaimTransport.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -86,7 +87,8 @@ export async function runLoop({
   relay = 'http://127.0.0.1:18884',
   directory = 'https://bootstrap.a2a.fun',
   relayUrl = 'wss://bootstrap.a2a.fun/relay',
-  task_sync_peer_id = null
+  task_sync_peer_id = null,
+  claim_announce_peers = null
 } = {}) {
   const ws = typeof workspace_path === 'string' && workspace_path.trim() ? workspace_path : process.cwd();
   const h = String(holder || '').trim();
@@ -171,6 +173,30 @@ export async function runLoop({
         console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_IDLE', mode, holder: h, reason: 'TASK_ALREADY_CLAIMED', task_id: picked.task_id, error: acc.error }));
         await saveRuntimeState({ state_path, state });
         return { idle: true, reason: 'TASK_ALREADY_CLAIMED' };
+      }
+
+      // Announce claim to peers so they don't execute the same task.
+      try {
+        const afterAcc = await loadTasks({ tasks_path });
+        const claimed = afterAcc.table.tasks.find((t) => t.task_id === picked.task_id) || null;
+        const lease = claimed?.lease || { holder: h, expires_at: null };
+        const peersToAnnounce = Array.isArray(claim_announce_peers) ? claim_announce_peers : [];
+        for (const peer of peersToAnnounce) {
+          const to = String(peer || '').trim();
+          if (!to || to === h) continue;
+          await sendTaskAccepted({ relayUrl, from_node_id: h, to_node_id: to, task_id: picked.task_id, lease }).catch(() => null);
+        }
+      } catch {}
+
+      // Re-check ownership before executing (claim protocol)
+      {
+        const cur = await loadTasks({ tasks_path });
+        const curTask = cur.table.tasks.find((t) => t.task_id === picked.task_id) || null;
+        if (curTask && String(curTask.assigned_to || '').trim() && String(curTask.assigned_to || '').trim() !== h) {
+          console.log(JSON.stringify({ ok: true, event: 'TASK_EXECUTION_SKIPPED_NOT_CLAIM_OWNER', task_id: picked.task_id, assigned_to: curTask.assigned_to }));
+          await saveRuntimeState({ state_path, state });
+          return { idle: true, reason: 'NOT_CLAIM_OWNER' };
+        }
       }
 
       // Dedup guard: skip execution if already completed with matching fingerprint
