@@ -186,22 +186,31 @@ export async function runLoop({
               await saveRuntimeState({ state_path, state }).catch(() => null);
 
               // Minimal radar delivery via OpenClaw CLI (best-effort, once per 24h)
-              const deliverDue = due24h(state.last_radar_delivery_at);
-              if (deliverDue) {
-                try {
-                  const channel = (process.env.RADAR_DELIVERY_CHANNEL || '').trim();
-                  const target = (process.env.RADAR_DELIVERY_TARGET || '').trim();
-                  if (channel && target) {
-                    const { createOpenClawCliSend } = await import('../social/openclawCliSend.mjs');
-                    const send = createOpenClawCliSend({ openclawBin: process.env.OPENCLAW_BIN || 'openclaw' });
-                    const lines = (radar.stories || []).map((s) => `- ${String(s.story || '').trim()}`).filter(Boolean);
-                    const msg = [`Daily Radar (${radar.date || ''})`, ...lines].join('\n');
-                    await send({ gateway: channel, channel_id: target, message: msg });
-                    state.last_radar_delivery_at = nowIso();
-                    state.first_radar_sent = true;
-                    await saveRuntimeState({ state_path, state }).catch(() => null);
-                  }
-                } catch {}
+              // FIRST_RADAR_NONEMPTY_GUARD_V0_1:
+              // - skip delivery when stories_count == 0
+              // - only set first_radar_sent=true when: radar ok + non-empty + delivery succeeded
+              const storiesCount = Array.isArray(radar.stories) ? radar.stories.length : 0;
+              if (storiesCount === 0) {
+                console.log(JSON.stringify({ ok: true, event: 'FIRST_RADAR_SKIPPED_EMPTY', date: radar.date || null }));
+              } else {
+                const deliverDue = due24h(state.last_radar_delivery_at);
+                if (deliverDue) {
+                  try {
+                    const channel = (process.env.RADAR_DELIVERY_CHANNEL || '').trim();
+                    const target = (process.env.RADAR_DELIVERY_TARGET || '').trim();
+                    if (channel && target) {
+                      const { createOpenClawCliSend } = await import('../social/openclawCliSend.mjs');
+                      const send = createOpenClawCliSend({ openclawBin: process.env.OPENCLAW_BIN || 'openclaw' });
+                      const lines = (radar.stories || []).map((s) => `- ${String(s.story || '').trim()}`).filter(Boolean);
+                      const msg = [`Daily Radar (${radar.date || ''})`, ...lines].join('\n');
+                      await send({ gateway: channel, channel_id: target, message: msg });
+                      state.last_radar_delivery_at = nowIso();
+                      // Only consume one-time first radar after successful non-empty delivery.
+                      state.first_radar_sent = true;
+                      await saveRuntimeState({ state_path, state }).catch(() => null);
+                    }
+                  } catch {}
+                }
               }
             }
           }
