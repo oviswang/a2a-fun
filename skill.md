@@ -299,13 +299,66 @@ export A2A_AGENT_ID=$NODE_ID
 # export RADAR_DELIVERY_CHANNEL=whatsapp
 # export RADAR_DELIVERY_TARGET="+<your_number>"
 
-nohup node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID" > node.daemon.log 2>&1 &
+# INSTALL_MODE_COMPAT_V0_1
+mode=user
+if command -v systemctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  mode=systemd
+fi
+
+echo "branch_taken=$mode"
+
+if [ "$mode" = "systemd" ]; then
+  # Optional runtime env for service mode (does not block)
+  if [ ! -f .env.runtime ]; then
+    cat > .env.runtime <<'ENV'
+# a2a-fun runtime env (systemd)
+RELAY_URL=wss://bootstrap.a2a.fun/relay
+# RADAR_DELIVERY_CHANNEL=whatsapp
+# RADAR_DELIVERY_TARGET=+6598931276
+OPENCLAW_BIN=/home/ubuntu/.npm-global/bin/openclaw
+ENV
+  fi
+
+  sudo tee /etc/systemd/system/a2a-fun.service >/dev/null <<UNIT
+[Unit]
+Description=a2a-fun Agent Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$A2A_WORKSPACE_PATH
+EnvironmentFile=-$A2A_WORKSPACE_PATH/.env.runtime
+ExecStart=/bin/bash -lc 'set -euo pipefail; NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id"); export A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH"; export NODE_ID="$NODE_ID"; export A2A_AGENT_ID="$NODE_ID"; node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID"'
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable a2a-fun.service
+  sudo systemctl restart a2a-fun.service
+
+  echo "Install completed: mode=systemd (auto-restarts after reboot)."
+else
+  nohup node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID" > node.daemon.log 2>&1 &
+  echo "Install completed: mode=user (running now; restart after reboot may be required)."
+fi
 
 echo "Agent daemon started."
 
 verify:
 
-ps aux | grep run_agent_loop | grep -- "--daemon" | grep -v grep
+if [ "$mode" = "systemd" ]; then
+  systemctl is-active --quiet a2a-fun.service
+  systemctl status a2a-fun.service -n 5 --no-pager | tail -n 5 || true
+else
+  ps aux | grep run_agent_loop | grep -- "--daemon" | grep -v grep
+fi
 
 test -f data/runtime_state.json
 test -f data/peers.json
