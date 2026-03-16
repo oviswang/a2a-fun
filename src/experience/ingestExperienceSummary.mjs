@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { cleanExperienceSummary } from './cleanExperienceSummary.mjs';
 import { splitExperienceSummary } from './splitExperienceSummary.mjs';
+import { filterExperienceFragments } from './filterExperienceFragments.mjs';
 import { classifyExperienceSummary } from './classifyExperienceSummary.mjs';
 
 function safeStr(s) {
@@ -78,7 +79,8 @@ export async function ingestExperienceSummary({
   });
 
   const split = splitExperienceSummary(cleaned);
-  const classified = classifyExperienceSummary(split);
+  const filtered = filterExperienceFragments(split);
+  const classified = classifyExperienceSummary(filtered);
 
   const rec = {
     dialogue_id: did,
