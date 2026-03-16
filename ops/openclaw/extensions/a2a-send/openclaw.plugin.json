@@ -1,0 +1,13 @@
+{
+  "id": "a2a-send",
+  "name": "a2a-send",
+  "description": "Expose a minimal A2A delivery endpoint for OpenClaw gateway channels.",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "engine": { "openclaw": "*" },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
