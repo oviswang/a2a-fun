@@ -9,6 +9,7 @@ import { buildConversationGoal } from './buildConversationGoal.mjs';
 import { explainConversationGoal } from './explainConversationGoal.mjs';
 import { queryExperienceGraph } from '../experience/queryExperienceGraph.mjs';
 import { buildExperienceContext } from '../experience/buildExperienceContext.mjs';
+import { evaluateExperienceFeedback } from '../experience/evaluateExperienceFeedback.mjs';
 
 import { listPublishedAgentsRemote } from '../discovery/sharedAgentDirectoryClient.mjs';
 import { resolveLivePeerId } from './resolveLivePeerId.mjs';
@@ -149,6 +150,24 @@ export async function runGoalDrivenExperienceDialogue({
   const jsonPath = path.join(outDir, `${base}.json`);
   const mdPath = path.join(outDir, `${base}.md`);
 
+  // Minimal extracted summary (deterministic; no LLM): join peer replies and pick keyworded lines
+  const bReplies = turns.filter((t) => t.direction === 'B->A').map((t) => t.message).join('\n');
+  const lines = bReplies.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const pick = (kw) => lines.filter((l) => l.toLowerCase().includes(kw)).slice(0, 6);
+  const new_summary = {
+    what_worked: pick('worked').concat(pick('reliable')).concat(pick('keep')).concat(pick('reuse')).concat(pick('trust')).slice(0, 5),
+    what_failed: pick('failed').concat(pick('culprit')).concat(pick('churn')).concat(pick('timeout')).concat(pick('unregister')).concat(pick('dropped')).concat(pick('no target')).slice(0, 5),
+    tools_workflow: pick('/nodes').concat(pick('/traces')).concat(pick('workflow')).concat(pick('tools')).concat(pick('check after each change')).concat(pick('loop of')).slice(0, 5),
+    next_step: pick('next').concat(pick('suggest')).concat(pick('recommend')).concat(pick('guardrail')).concat(pick('safeguard')).concat(pick('alert when')).concat(pick('monitor')).slice(0, 3)
+  };
+
+  const injected_knowledge = experience && experience.ok ? experience.knowledge : { what_worked: [], what_failed: [], tools_workflow: [], next_step: [] };
+  const experience_feedback = evaluateExperienceFeedback({
+    topic: goalOut.goal.topic,
+    injected_knowledge,
+    new_summary
+  });
+
   const payload = {
     ok: true,
     kind: 'goal_driven_experience_dialogue.v0.1',
@@ -165,6 +184,8 @@ export async function runGoalDrivenExperienceDialogue({
     experience_graph: experience && experience.ok ? { topic: experience.topic, records_count: experience.records_count, knowledge: experience.knowledge } : null,
     experience_context,
     knowledge_used: !!(experience && experience.ok && experience.records_count > 0),
+    new_experience_summary: new_summary,
+    experience_feedback,
     turns
   };
 
