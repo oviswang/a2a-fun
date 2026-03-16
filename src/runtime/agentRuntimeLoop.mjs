@@ -10,6 +10,7 @@ import { sendTaskResult } from '../tasks/taskTransport.mjs';
 import { sendTaskSyncRequest } from '../tasks/taskSyncTransport.mjs';
 import { recoverStuckTasks } from '../tasks/taskRecovery.mjs';
 import { shouldSkipExecution } from '../tasks/taskDedup.mjs';
+import { loadNodeCapabilities, taskMatchesCapabilities } from './nodeCapabilities.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -66,10 +67,15 @@ function leaseActive(task) {
   return Number.isFinite(t) && t > Date.now();
 }
 
-function pickOldestPublished(tasks) {
+function pickOldestPublished(tasks, matcher) {
   const pub = tasks.filter((t) => t && t.status === 'published' && !leaseActive(t));
   pub.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
-  return pub[0] || null;
+  if (typeof matcher !== 'function') return pub[0] || null;
+  for (const t of pub) {
+    const m = matcher(t);
+    if (m && m.match === true) return t;
+  }
+  return null;
 }
 
 export async function runLoop({
@@ -128,8 +134,11 @@ export async function runLoop({
         state.last_task_sync_request_at = nowIso();
       }
 
-      // C) pick task
-      const picked = pickOldestPublished(loaded.table.tasks);
+      // C) pick task (capability-aware)
+      const caps = await loadNodeCapabilities({ workspace_path: ws });
+      const matcher = (task) => taskMatchesCapabilities({ task, capabilities: caps.capabilities });
+
+      const picked = pickOldestPublished(loaded.table.tasks, matcher);
       if (!picked) {
         console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_IDLE', mode, holder: h, reason: 'NO_PUBLISHED_TASK' }));
         await saveRuntimeState({ state_path, state });
