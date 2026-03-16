@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { cleanExperienceSummary } from './cleanExperienceSummary.mjs';
+import { classifyExperienceSummary } from './classifyExperienceSummary.mjs';
 
 function safeStr(s) {
   return typeof s === 'string' ? s.trim() : '';
@@ -75,13 +76,15 @@ export async function ingestExperienceSummary({
     next_step: v.summary.suggested_next_step
   });
 
+  const classified = classifyExperienceSummary(cleaned);
+
   const rec = {
     dialogue_id: did,
     source_nodes: Array.isArray(source_nodes) ? source_nodes.map(safeStr).filter(Boolean) : [],
-    what_worked: cleaned.what_worked,
-    what_failed: cleaned.what_failed,
-    tools_workflow: cleaned.tools_workflow,
-    next_step: cleaned.next_step,
+    what_worked: classified.what_worked,
+    what_failed: classified.what_failed,
+    tools_workflow: classified.tools_workflow,
+    next_step: classified.next_step,
     timestamp: safeStr(timestamp) || new Date().toISOString(),
     source_summary_path: sp
   };
