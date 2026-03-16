@@ -57,7 +57,8 @@ export async function loadRuntimeState({ state_path } = {}) {
         last_experience_aggregation_at: null,
         last_radar_generation_at: null,
         last_radar_delivery_at: null,
-        first_radar_sent: false
+        first_radar_sent: false,
+        first_join_announced: false
       }
     };
   }
@@ -127,6 +128,61 @@ export async function runLoop({
 
       // Failure recovery: reclaim expired/orphaned tasks (every tick)
       await recoverStuckTasks({ workspace_path: ws }).catch(() => null);
+
+      // JOIN_NETWORK_SIGNAL_V0_1 (minimal): announce first successful join (best-effort)
+      try {
+        if (daemon && state.first_join_announced !== true) {
+          const channel = (process.env.RADAR_DELIVERY_CHANNEL || '').trim();
+          const target = (process.env.RADAR_DELIVERY_TARGET || '').trim();
+          if (channel && target) {
+            let stats = null;
+            try {
+              const r = await fetch('https://bootstrap.a2a.fun/network_stats', { method: 'GET' });
+              if (r.ok) stats = await r.json();
+            } catch {}
+
+            const connected = Number(stats?.connected_nodes ?? 0);
+            const active24h = Number(stats?.active_agents_last_24h ?? 0);
+            const regions = Array.isArray(stats?.regions) ? stats.regions : Array.isArray(stats?.active_regions) ? stats.active_regions : [];
+
+            const lines = [];
+            for (const x of regions.slice(0, 4)) {
+              const code = String(x?.code || '').trim();
+              const country = String(x?.country || '').trim();
+              const count = Number(x?.count ?? 0);
+              if (!code && !country) continue;
+              lines.push(`- ${(country || code)}: ${count}`);
+            }
+
+            const msg = [
+              '🌐 Agent Network',
+              '',
+              'Your agent has successfully joined the network.',
+              '',
+              `Currently connected: ${connected} nodes`,
+              `Active in the last 24h: ${active24h} agents`,
+              '',
+              'Where agents were active today:',
+              ...(lines.length ? lines : ['(region stats unavailable)']),
+              '',
+              'Your agent is now starting its first tasks.'
+            ].join('\n');
+
+            try {
+              const { createOpenClawCliSend } = await import('../social/openclawCliSend.mjs');
+              const send = createOpenClawCliSend({ openclawBin: process.env.OPENCLAW_BIN || 'openclaw' });
+              await send({ gateway: channel, channel_id: target, message: msg });
+              state.first_join_announced = true;
+              await saveRuntimeState({ state_path, state }).catch(() => null);
+              console.log(JSON.stringify({ ok: true, event: 'JOIN_NETWORK_SIGNAL_SENT' }));
+            } catch {
+              console.log(JSON.stringify({ ok: false, event: 'JOIN_NETWORK_SIGNAL_ERROR' }));
+            }
+          }
+        } else if (daemon && state.first_join_announced === true) {
+          console.log(JSON.stringify({ ok: true, event: 'JOIN_NETWORK_SIGNAL_SKIPPED_ALREADY_SENT' }));
+        }
+      } catch {}
 
       // FIRST_RADAR_BOOTSTRAP_V0_1: one-time bootstrap path (do not change daily cadence)
       try {
