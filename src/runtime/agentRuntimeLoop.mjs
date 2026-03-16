@@ -56,7 +56,8 @@ export async function loadRuntimeState({ state_path } = {}) {
         last_task_generation_at: null,
         last_experience_aggregation_at: null,
         last_radar_generation_at: null,
-        last_radar_delivery_at: null
+        last_radar_delivery_at: null,
+        first_radar_sent: false
       }
     };
   }
@@ -127,6 +128,35 @@ export async function runLoop({
       // Failure recovery: reclaim expired/orphaned tasks (every tick)
       await recoverStuckTasks({ workspace_path: ws }).catch(() => null);
 
+      // FIRST_RADAR_BOOTSTRAP_V0_1: one-time bootstrap path (do not change daily cadence)
+      try {
+        if (daemon && state.first_radar_sent !== true) {
+          const tasks_path = getTasksPath({ workspace_path: ws });
+          const loaded0 = await loadTasks({ tasks_path });
+          const tasks0 = Array.isArray(loaded0.table?.tasks) ? loaded0.table.tasks : [];
+
+          if (tasks0.length === 0) {
+            const { createTask } = await import('../tasks/taskSchema.mjs');
+
+            const bootstrapSpecs = [
+              { type: 'run_check', topic: 'relay_bootstrap', input: { check: 'relay_health', time_window: 'last_24h' }, requires: ['run_check'] },
+              { type: 'node_diagnose', topic: 'peer_connectivity', input: { check: 'network_diagnostics', time_window: 'last_24h' }, requires: ['node_diagnose'] },
+              { type: 'web_research', topic: 'agent_network_bootstrap', input: { question: 'agent network bootstrap', time_window: 'last_24h' }, requires: ['web_research'] }
+            ];
+
+            for (const s of bootstrapSpecs.slice(0, 3)) {
+              const made = createTask({ type: s.type, topic: s.topic, created_by: h, input: s.input });
+              if (made.ok) {
+                made.task.requires = s.requires;
+                await (await import('../tasks/taskStore.mjs')).publishTask({ tasks_path, task: made.task }).catch(() => null);
+              }
+            }
+
+            console.log(JSON.stringify({ ok: true, event: 'FIRST_RADAR_BOOTSTRAP_TASKS_CREATED', count: Math.min(3, bootstrapSpecs.length) }));
+          }
+        }
+      } catch {}
+
       // MVP automation wiring (daily): task generation -> aggregation -> radar
       try {
         const dailyDue = due24h(state.last_task_generation_at);
@@ -168,6 +198,7 @@ export async function runLoop({
                     const msg = [`Daily Radar (${radar.date || ''})`, ...lines].join('\n');
                     await send({ gateway: channel, channel_id: target, message: msg });
                     state.last_radar_delivery_at = nowIso();
+                    state.first_radar_sent = true;
                     await saveRuntimeState({ state_path, state }).catch(() => null);
                   }
                 } catch {}
