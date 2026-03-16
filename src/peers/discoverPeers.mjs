@@ -66,6 +66,13 @@ export async function discoverPeers({
         relay_session_id: safeStr(live?.session_id) || null,
         last_seen: safeStr(live?.last_seen) || null
       },
+      endpoints: {
+        relay_url: 'wss://bootstrap.a2a.fun/relay'
+      },
+      stats: {
+        tasks_executed: 0,
+        last_task_at: null
+      },
       scores: {
         prefer: 0
       },
@@ -92,6 +99,13 @@ export async function discoverPeers({
         on_relay: true,
         relay_session_id: safeStr(n?.session_id) || null,
         last_seen: safeStr(n?.last_seen) || null
+      },
+      endpoints: {
+        relay_url: 'wss://bootstrap.a2a.fun/relay'
+      },
+      stats: {
+        tasks_executed: 0,
+        last_task_at: null
       },
       scores: { prefer: 0 },
       notes: { last_contacted_at: null }

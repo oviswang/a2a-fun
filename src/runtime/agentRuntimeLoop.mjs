@@ -13,6 +13,7 @@ import { shouldSkipExecution } from '../tasks/taskDedup.mjs';
 import { loadNodeCapabilities, taskMatchesCapabilities } from './nodeCapabilities.mjs';
 import { sendTaskAccepted } from '../tasks/taskClaimTransport.mjs';
 import { sendPeerGossip } from '../peers/peerGossipTransport.mjs';
+import { recordTaskExecuted } from '../peers/peerStats.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -265,6 +266,10 @@ export async function runLoop({
       const final = after.table.tasks.find((t) => t.task_id === picked.task_id) || null;
 
       console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_TASK_COMPLETED', mode, holder: h, task_id: picked.task_id, final_status: final?.status || null }));
+
+      // Peer graph stats: update self execution counters
+      await recordTaskExecuted({ workspace_path: ws, node_id: h, at: nowIso() }).catch(() => null);
+
       return { idle: false, task_id: picked.task_id, final_status: final?.status || null };
     } catch (e) {
       console.log(JSON.stringify({ ok: false, event: 'AGENT_LOOP_ERROR', mode, holder: h, error: { message: String(e?.message || e) } }));

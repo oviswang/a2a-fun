@@ -79,6 +79,10 @@ export async function receivePeerGossip({ workspace_path, payload } = {}) {
         endpoints: {
           relay_url: relay
         },
+        stats: {
+          tasks_executed: 0,
+          last_task_at: null
+        },
         scores: { prefer: 0 },
         notes: { last_contacted_at: null }
       };
