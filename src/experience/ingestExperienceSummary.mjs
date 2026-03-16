@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { cleanExperienceSummary } from './cleanExperienceSummary.mjs';
+
 function safeStr(s) {
   return typeof s === 'string' ? s.trim() : '';
 }
@@ -66,13 +68,20 @@ export async function ingestExperienceSummary({
     return { ok: true, deduped: true, graph_path: gp, topic: tp, dialogue_id: did };
   }
 
-  const rec = {
-    dialogue_id: did,
-    source_nodes: Array.isArray(source_nodes) ? source_nodes.map(safeStr).filter(Boolean) : [],
+  const cleaned = cleanExperienceSummary({
     what_worked: v.summary.what_worked,
     what_failed: v.summary.what_failed_or_risk,
     tools_workflow: v.summary.tools_or_workflow,
-    next_step: v.summary.suggested_next_step,
+    next_step: v.summary.suggested_next_step
+  });
+
+  const rec = {
+    dialogue_id: did,
+    source_nodes: Array.isArray(source_nodes) ? source_nodes.map(safeStr).filter(Boolean) : [],
+    what_worked: cleaned.what_worked,
+    what_failed: cleaned.what_failed,
+    tools_workflow: cleaned.tools_workflow,
+    next_step: cleaned.next_step,
     timestamp: safeStr(timestamp) || new Date().toISOString(),
     source_summary_path: sp
   };
