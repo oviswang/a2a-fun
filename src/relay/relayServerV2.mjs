@@ -197,6 +197,89 @@ export function createRelayServerV2({ bindHost = '127.0.0.1', port = 3111, wsPat
       return;
     }
 
+    if (req.method === 'GET' && req.url === '/network_stats') {
+      // Minimal, best-effort network stats. Country-level only.
+      const now = new Date();
+      const dayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+
+      // connected nodes: current relay connections (entries)
+      const connected_nodes = entries.size;
+
+      // unique nodes seen today: based on traces register events today
+      const seenToday = new Set();
+      const newToday = new Set();
+      for (const t of traces) {
+        if (t.event !== 'register') continue;
+        if (!t.ts || String(t.ts).slice(0, 10) !== dayKey) continue;
+        if (t.from) seenToday.add(String(t.from));
+      }
+      // new_nodes_today: nodes that registered today but had no register before today
+      const seenBefore = new Set();
+      for (const t of traces) {
+        if (t.event !== 'register') continue;
+        if (!t.from) continue;
+        if (!t.ts) continue;
+        const d = String(t.ts).slice(0, 10);
+        if (d < dayKey) seenBefore.add(String(t.from));
+      }
+      for (const n of seenToday) {
+        if (!seenBefore.has(n)) newToday.add(n);
+      }
+
+      // active regions: country only (best-effort)
+      // If env provides a simple mapping, use it: RELAY_COUNTRY_BY_NODE='node1=SG,node2=CN'
+      const mapEnv = typeof process.env.RELAY_COUNTRY_BY_NODE === 'string' ? process.env.RELAY_COUNTRY_BY_NODE : '';
+      const map = new Map();
+      if (mapEnv.trim()) {
+        for (const part of mapEnv.split(',')) {
+          const [k, v] = part.split('=');
+          const kk = k ? k.trim() : '';
+          const vv = v ? v.trim().toUpperCase() : '';
+          if (kk && vv) map.set(kk, vv);
+        }
+      }
+
+      // current connected node_ids list
+      const connectedNodeIds = [];
+      for (const e of entries.values()) connectedNodeIds.push(e.node_id);
+
+      const regionCounts = new Map();
+      for (const n of connectedNodeIds) {
+        const c = map.get(n) || null;
+        if (!c) continue;
+        regionCounts.set(c, (regionCounts.get(c) || 0) + 1);
+      }
+
+      const countryNames = {
+        SG: 'Singapore',
+        CN: 'China',
+        US: 'United States',
+        JP: 'Japan',
+        DE: 'Germany',
+        GB: 'United Kingdom',
+        FR: 'France',
+        AU: 'Australia',
+        IN: 'India'
+      };
+
+      const active_regions = Array.from(regionCounts.entries())
+        .map(([code, count]) => ({ code, country: countryNames[code] || code, count }))
+        .sort((a, b) => b.count - a.count || String(a.code).localeCompare(String(b.code)));
+
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        ok: true,
+        kind: 'NETWORK_STATS_V0_1',
+        day: dayKey,
+        connected_nodes,
+        unique_node_ids_seen_today: seenToday.size,
+        new_nodes_today: newToday.size,
+        active_regions
+      }));
+      return;
+    }
+
     res.statusCode = 404;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }));
