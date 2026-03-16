@@ -3,7 +3,7 @@ import { createTask } from '../src/tasks/taskSchema.mjs';
 import { getTasksPath, publishTask } from '../src/tasks/taskStore.mjs';
 
 function parseArgs(argv) {
-  const out = { type: 'run_check', topic: 'relay', created_by: 'local', input: {} };
+  const out = { type: 'run_check', topic: 'relay', created_by: 'local', input: {}, requires: null };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--type') out.type = argv[++i] || out.type;
@@ -13,6 +13,7 @@ function parseArgs(argv) {
     else if (a === '--url') out.input.url = argv[++i] || '';
     else if (a === '--max-chars') out.input.max_chars = parseInt(argv[++i] || '2000', 10);
     else if (a === '--check') out.input.check = argv[++i] || 'relay_health';
+    else if (a === '--requires') out.requires = (argv[++i] || '').split(',').map(s=>s.trim()).filter(Boolean);
   }
   if (out.type === 'run_check' && !out.input.check) out.input.check = 'relay_health';
   return out;
@@ -23,6 +24,7 @@ const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
 const tasks_path = getTasksPath({ workspace_path });
 
 const made = createTask({ type: args.type, topic: args.topic, created_by: args.created_by, input: args.input });
+if (made.ok && Array.isArray(args.requires) && args.requires.length > 0) made.task.requires = args.requires;
 if (!made.ok) {
   console.log(JSON.stringify(made, null, 2));
   process.exit(1);
