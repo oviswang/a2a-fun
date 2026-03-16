@@ -145,14 +145,32 @@ export async function runLoop({
         return { idle: true, reason: 'NO_PUBLISHED_TASK' };
       }
 
+      // Claim fairness: jitter + recent-work delay
+      const jitterMs = 100 + Math.floor(Math.random() * 701); // 100..800
+      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_JITTER_APPLIED', mode, holder: h, task_id: picked.task_id, jitter_ms: jitterMs }));
+      await sleep(jitterMs);
+
+      const lastExec = state.last_task_executed_at ? Date.parse(state.last_task_executed_at) : NaN;
+      if (Number.isFinite(lastExec)) {
+        const agoMs = Date.now() - lastExec;
+        if (agoMs >= 0 && agoMs < 5000) {
+          const extra = 400 + Math.floor(Math.random() * 401); // 400..800
+          console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_DELAYED_RECENT_WORK', mode, holder: h, task_id: picked.task_id, extra_delay_ms: extra, last_task_executed_at: state.last_task_executed_at }));
+          await sleep(extra);
+        }
+      }
+
       state.last_task_pick_at = nowIso();
+      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SELECTED', mode, holder: h, task_id: picked.task_id }));
       console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_TASK_PICKED', mode, holder: h, task_id: picked.task_id }));
 
       // D) accept + execute
       const acc = await acceptTask({ tasks_path, task_id: picked.task_id, holder: h });
       if (!acc.ok) {
+        // Another node may have claimed it first; treat as benign contention.
+        console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_IDLE', mode, holder: h, reason: 'TASK_ALREADY_CLAIMED', task_id: picked.task_id, error: acc.error }));
         await saveRuntimeState({ state_path, state });
-        return { idle: false, error: acc.error, stage: 'accept', task_id: picked.task_id };
+        return { idle: true, reason: 'TASK_ALREADY_CLAIMED' };
       }
 
       // Dedup guard: skip execution if already completed with matching fingerprint
