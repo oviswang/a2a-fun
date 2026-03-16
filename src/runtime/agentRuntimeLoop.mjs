@@ -8,6 +8,7 @@ import { getTasksPath, loadTasks, acceptTask, markRunning, completeTask, failTas
 import { executeTask } from '../tasks/taskExecutor.mjs';
 import { sendTaskResult } from '../tasks/taskTransport.mjs';
 import { sendTaskSyncRequest } from '../tasks/taskSyncTransport.mjs';
+import { recoverStuckTasks } from '../tasks/taskRecovery.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -99,6 +100,9 @@ export async function runLoop({
     try {
       state.last_loop_tick_at = nowIso();
       console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_TICK', mode, holder: h, ts: state.last_loop_tick_at }));
+
+      // Failure recovery: reclaim expired/orphaned tasks (every tick)
+      await recoverStuckTasks({ workspace_path: ws }).catch(() => null);
 
       // A) discover peers (every 30s)
       const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.last_peer_refresh_at)) >= 30000;
