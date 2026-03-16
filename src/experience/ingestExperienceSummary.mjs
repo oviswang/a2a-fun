@@ -4,6 +4,7 @@ import path from 'node:path';
 import { cleanExperienceSummary } from './cleanExperienceSummary.mjs';
 import { splitExperienceSummary } from './splitExperienceSummary.mjs';
 import { filterExperienceFragments } from './filterExperienceFragments.mjs';
+import { stripExperiencePrefixes } from './stripExperiencePrefixes.mjs';
 import { classifyExperienceSummary } from './classifyExperienceSummary.mjs';
 
 function safeStr(s) {
@@ -80,7 +81,8 @@ export async function ingestExperienceSummary({
 
   const split = splitExperienceSummary(cleaned);
   const filtered = filterExperienceFragments(split);
-  const classified = classifyExperienceSummary(filtered);
+  const stripped = stripExperiencePrefixes(filtered);
+  const classified = classifyExperienceSummary(stripped);
 
   const rec = {
     dialogue_id: did,
