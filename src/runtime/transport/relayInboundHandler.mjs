@@ -3,6 +3,8 @@ import { receiveAgentProfileExchange } from '../../social/agentProfileExchangeRe
 import { receiveAgentActivityDialogue } from '../../social/agentActivityDialogueReceiver.mjs';
 import { receiveAgentExperienceDialogue } from '../../social/agentExperienceDialogueReceiver.mjs';
 import { receiveOpenClawLiveQuery } from '../../openclaw/openclawLiveQueryReceiver.mjs';
+import { receiveTaskPublished, receiveTaskResult } from '../../tasks/taskReceiver.mjs';
+import { receiveTaskSyncRequest, receiveTaskSyncResponse } from '../../tasks/taskSync.mjs';
 
 function isObj(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
@@ -48,6 +50,29 @@ export function createRelayInboundHandler({ workspace_path, relayUrl = null, nod
     if (payload.kind === 'OPENCLAW_LIVE_QUERY_REQUEST') {
       const res = await receiveOpenClawLiveQuery({ workspace_path: ws, payload, relayUrl: ru, nodeId: nid, relayClient });
       return { ok: res.ok === true, handled: true, kind: 'OPENCLAW_LIVE_QUERY_REQUEST', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'A2A_TASK_PUBLISHED') {
+      const res = await receiveTaskPublished({ workspace_path: ws, payload });
+      return { ok: res.ok === true, handled: true, kind: 'A2A_TASK_PUBLISHED', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'A2A_TASK_RESULT') {
+      const res = await receiveTaskResult({ workspace_path: ws, payload });
+      return { ok: res.ok === true, handled: true, kind: 'A2A_TASK_RESULT', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'A2A_TASK_SYNC_REQUEST') {
+      const res = await receiveTaskSyncRequest({ workspace_path: ws, payload });
+      if (res.ok && res.response && relayClient && from) {
+        await relayClient.relay({ to: from, payload: res.response });
+      }
+      return { ok: res.ok === true, handled: true, kind: 'A2A_TASK_SYNC_REQUEST', error: res.ok ? null : res.error };
+    }
+
+    if (payload.kind === 'A2A_TASK_SYNC_RESPONSE') {
+      const res = await receiveTaskSyncResponse({ workspace_path: ws, payload });
+      return { ok: res.ok === true, handled: true, kind: 'A2A_TASK_SYNC_RESPONSE', error: res.ok ? null : res.error };
     }
 
     return { ok: true, handled: false, kind: payload.kind || null };

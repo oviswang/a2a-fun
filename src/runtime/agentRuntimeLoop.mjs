@@ -7,6 +7,7 @@ import { getPeersPath, savePeers } from '../peers/peerStore.mjs';
 import { getTasksPath, loadTasks, acceptTask, markRunning, completeTask, failTask } from '../tasks/taskStore.mjs';
 import { executeTask } from '../tasks/taskExecutor.mjs';
 import { sendTaskResult } from '../tasks/taskTransport.mjs';
+import { sendTaskSyncRequest } from '../tasks/taskSyncTransport.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -44,7 +45,8 @@ export async function loadRuntimeState({ state_path } = {}) {
         last_task_pick_at: null,
         last_task_executed_at: null,
         last_loop_tick_at: null,
-        current_mode: null
+        current_mode: null,
+        last_task_sync_request_at: null
       }
     };
   }
@@ -75,7 +77,8 @@ export async function runLoop({
   holder,
   relay = 'http://127.0.0.1:18884',
   directory = 'https://bootstrap.a2a.fun',
-  relayUrl = 'wss://bootstrap.a2a.fun/relay'
+  relayUrl = 'wss://bootstrap.a2a.fun/relay',
+  task_sync_peer_id = null
 } = {}) {
   const ws = typeof workspace_path === 'string' && workspace_path.trim() ? workspace_path : process.cwd();
   const h = String(holder || '').trim();
@@ -108,11 +111,17 @@ export async function runLoop({
         }
       }
 
-      // B) sync tasks (every 10s)
+      // B) sync tasks (every 10s) + task sync protocol (every 60s)
       const taskDue = !state.last_task_sync_at || (Date.now() - Date.parse(state.last_task_sync_at)) >= 10000;
       const tasks_path = getTasksPath({ workspace_path: ws });
-      const loaded = taskDue ? await loadTasks({ tasks_path }) : await loadTasks({ tasks_path });
+      const loaded = await loadTasks({ tasks_path });
       state.last_task_sync_at = nowIso();
+
+      const syncDue = !state.last_task_sync_request_at || (Date.now() - Date.parse(state.last_task_sync_request_at)) >= 60000;
+      if (daemon && syncDue && task_sync_peer_id) {
+        await sendTaskSyncRequest({ relayUrl, from_node_id: h, to_node_id: String(task_sync_peer_id), limit: 50 }).catch(() => null);
+        state.last_task_sync_request_at = nowIso();
+      }
 
       // C) pick task
       const picked = pickOldestPublished(loaded.table.tasks);

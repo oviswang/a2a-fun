@@ -2,7 +2,7 @@
 import { runLoop } from '../src/runtime/agentRuntimeLoop.mjs';
 
 function parseArgs(argv) {
-  const out = { once: false, daemon: false, holder: null, relay: 'http://127.0.0.1:18884', directory: 'https://bootstrap.a2a.fun', relayUrl: 'wss://bootstrap.a2a.fun/relay' };
+  const out = { once: false, daemon: false, holder: null, relay: 'http://127.0.0.1:18884', directory: 'https://bootstrap.a2a.fun', relayUrl: 'wss://bootstrap.a2a.fun/relay', taskSyncPeer: null };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--once') out.once = true;
@@ -11,6 +11,7 @@ function parseArgs(argv) {
     else if (a === '--relay') out.relay = argv[++i] || out.relay;
     else if (a === '--directory') out.directory = argv[++i] || out.directory;
     else if (a === '--relayUrl') out.relayUrl = argv[++i] || out.relayUrl;
+    else if (a === '--task-sync-peer') out.taskSyncPeer = argv[++i] || null;
   }
   return out;
 }
@@ -25,7 +26,8 @@ const out = await runLoop({
   holder: args.holder,
   relay: args.relay,
   directory: args.directory,
-  relayUrl: args.relayUrl
+  relayUrl: args.relayUrl,
+  task_sync_peer_id: args.taskSyncPeer
 });
 
 console.log(JSON.stringify(out, null, 2));
