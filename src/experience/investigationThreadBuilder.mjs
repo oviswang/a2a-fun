@@ -38,7 +38,7 @@ function threadTypeForTopicEvents(list) {
   return 'investigation';
 }
 
-function buildThreadSummary({ thread_type, topic, actors, event_count, hasDiscovery, hasConfirmation, hasAnomaly } = {}) {
+function buildThreadSummary({ thread_type, topic, actors, event_count, hasDiscovery, hasConfirmation } = {}) {
   const n = Array.isArray(actors) ? actors.length : 0;
   const t = safeStr(topic) || 'unknown';
   const et = safeStr(thread_type) || 'investigation';
@@ -56,6 +56,34 @@ function buildThreadSummary({ thread_type, topic, actors, event_count, hasDiscov
     return `${n} agents collaborated to investigate ${t} (${event_count} events).`;
   }
   return `${n} agents tracked ${t} (${event_count} events).`;
+}
+
+function openingPhrase({ first_actor, first_activity } = {}) {
+  const a = safeStr(first_actor) || 'An agent';
+  const act = safeStr(first_activity) || 'working';
+  return `${a} started ${act} earlier today.`;
+}
+
+function spreadPhrase({ actors } = {}) {
+  const list = Array.isArray(actors) ? actors : [];
+  if (list.length < 2) return null;
+  const others = list.length - 1;
+  if (others === 1) return `One other agent later joined the same effort.`;
+  return `${others} other agents later joined the same effort.`;
+}
+
+function resolutionPhrase({ thread_type } = {}) {
+  const t = safeStr(thread_type);
+  if (t === 'anomaly') return 'By the end of the day, repeated failures were being reported.';
+  if (t === 'confirmation') return 'By the end of the day, the agents had converged on the same conclusion.';
+  if (t === 'investigation') return 'The topic remained under active investigation.';
+  if (t === 'discovery') return 'The new observation remained unconfirmed.';
+  return 'The work continued.';
+}
+
+function buildNarrative({ opening_phrase, spread_phrase, resolution_phrase } = {}) {
+  const parts = [safeStr(opening_phrase), safeStr(spread_phrase), safeStr(resolution_phrase)].filter(Boolean);
+  return parts.join(' ');
 }
 
 export async function buildInvestigationThreads({ aggregate, aggregate_path, window = 'last_24h' } = {}) {
@@ -96,6 +124,14 @@ export async function buildInvestigationThreads({ aggregate, aggregate_path, win
     const thread_type = threadTypeForTopicEvents(list);
     const thread_id = `thread:${hashId(`v0.1:${window}:${topic}:${thread_type}`)}`;
 
+    const first_actor = actors[0] || null;
+    const first_activity = safeStr(list[0]?.activity_phrase) || null;
+
+    const opening_phrase = openingPhrase({ first_actor, first_activity });
+    const spread_phrase = spreadPhrase({ actors });
+    const resolution_phrase = resolutionPhrase({ thread_type });
+    const narrative = buildNarrative({ opening_phrase, spread_phrase, resolution_phrase });
+
     threads.push({
       thread_id,
       topic,
@@ -108,9 +144,12 @@ export async function buildInvestigationThreads({ aggregate, aggregate_path, win
         actors,
         event_count: list.length,
         hasDiscovery,
-        hasConfirmation,
-        hasAnomaly
-      })
+        hasConfirmation
+      }),
+      opening_phrase,
+      spread_phrase,
+      resolution_phrase,
+      narrative
     });
   }
 
