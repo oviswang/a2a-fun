@@ -112,10 +112,12 @@ function isNodeId(x) {
 }
 
 export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath = '/relay' } = {}) {
-  // node_id -> { socket, lastSeenMs }
+  // node_id -> { socket, lastSeenMs, conn_id, remote, ua }
   const conns = new Map();
   // socket -> node_id
   const socketToNode = new Map();
+  // socket -> { conn_id, remote, ua }
+  const socketMeta = new Map();
 
   const IDLE_TIMEOUT_MS = Number(process.env.RELAY_IDLE_TIMEOUT_MS || 90_000);
   const SWEEP_INTERVAL_MS = Number(process.env.RELAY_SWEEP_INTERVAL_MS || 10_000);
@@ -159,7 +161,12 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
         ].join('\r\n')
       );
 
-      log('RELAY_NODE_CONNECTED', { node_id: null });
+      const conn_id = crypto.randomUUID();
+      const remote = socket.remoteAddress || null;
+      const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
+      socketMeta.set(socket, { conn_id, remote, ua });
+
+      log('RELAY_CONNECTION_OPEN', { node_id: null, conn_id, remote, ua });
 
       let buf = Buffer.alloc(0);
       let closed = false;
@@ -175,15 +182,17 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
         if (closed) return;
         closed = true;
         const node_id = socketToNode.get(socket);
+        const meta = socketMeta.get(socket) || {};
         if (node_id) {
           socketToNode.delete(socket);
           const cur = conns.get(node_id);
           // only delete if it is the same active socket
           if (cur && cur.socket === socket) conns.delete(node_id);
-          log('RELAY_NODE_DISCONNECTED', { node_id, reason });
+          log('RELAY_NODE_DISCONNECTED', { node_id, conn_id: meta.conn_id || null, remote: meta.remote || null, ua: meta.ua || null, reason });
         } else {
-          log('RELAY_NODE_DISCONNECTED', { node_id: null, reason });
+          log('RELAY_NODE_DISCONNECTED', { node_id: null, conn_id: meta.conn_id || null, remote: meta.remote || null, ua: meta.ua || null, reason });
         }
+        socketMeta.delete(socket);
         closeSocket(socket);
       };
 
@@ -223,9 +232,20 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
               continue;
             }
 
+            const metaNew = socketMeta.get(socket) || {};
+
             // Replace-old policy: if duplicate node_id exists, close old socket and accept new.
             const prev = conns.get(node_id);
             if (prev && prev.socket && prev.socket !== socket) {
+              log('RELAY_CONNECTION_REPLACED', {
+                node_id,
+                old_conn_id: prev.conn_id || null,
+                old_remote: prev.remote || null,
+                old_ua: prev.ua || null,
+                new_conn_id: metaNew.conn_id || null,
+                new_remote: metaNew.remote || null,
+                new_ua: metaNew.ua || null
+              });
               try {
                 writeWsText(prev.socket, { type: 'ERROR', error: 'REPLACED_BY_NEW_CONNECTION' });
               } catch {}
@@ -237,11 +257,11 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
               } catch {}
             }
 
-            conns.set(node_id, { socket, lastSeenMs: Date.now() });
+            conns.set(node_id, { socket, lastSeenMs: Date.now(), conn_id: metaNew.conn_id || null, remote: metaNew.remote || null, ua: metaNew.ua || null });
             socketToNode.set(socket, node_id);
 
             writeWsText(socket, { type: 'REGISTER_ACK', to: node_id, accepted: true });
-            log('RELAY_REGISTER_OK', { node_id });
+            log('RELAY_REGISTER_OK', { node_id, conn_id: metaNew.conn_id || null, remote: metaNew.remote || null, ua: metaNew.ua || null });
             continue;
           }
 
