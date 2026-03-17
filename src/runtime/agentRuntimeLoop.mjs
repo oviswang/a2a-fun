@@ -545,14 +545,16 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
     // Telemetry to creator (NO-SSH proof support)
     try {
       if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
-        networkHandle.send({
-          to: created_by,
-          topic: 'task.arbitration.telemetry',
-          payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_WINDOW_STARTED', claim_id, claim_ts, window_ms },
-          message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_WINDOW_STARTED:${claim_id}`
-        });
+        const topic = 'task.arbitration.telemetry';
+        const message_id = `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_WINDOW_STARTED:${claim_id}`;
+        const payload = { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_WINDOW_STARTED', claim_id, claim_ts, window_ms };
+        console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_ATTEMPT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id }));
+        const tx = networkHandle.send({ to: created_by, topic, payload, message_id });
+        console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id, ok_send: !!tx?.ok }));
       }
-    } catch {}
+    } catch (e) {
+      console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by || null, topic: 'task.arbitration.telemetry', ok_send: false, error: String(e?.message || e || 'telemetry_send_failed') }));
+    }
 
     // persist our own claim locally
     try {
@@ -614,14 +616,16 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
     // Telemetry to creator (NO-SSH proof support)
     try {
       if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
-        networkHandle.send({
-          to: created_by,
-          topic: 'task.arbitration.telemetry',
-          payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_WINDOW_COLLECTED', total_claims: norm.length },
-          message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_WINDOW_COLLECTED:${claim_id}`
-        });
+        const topic = 'task.arbitration.telemetry';
+        const message_id = `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_WINDOW_COLLECTED:${claim_id}`;
+        const payload = { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_WINDOW_COLLECTED', total_claims: norm.length };
+        console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_ATTEMPT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id }));
+        const tx = networkHandle.send({ to: created_by, topic, payload, message_id });
+        console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id, ok_send: !!tx?.ok }));
       }
-    } catch {}
+    } catch (e) {
+      console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by || null, topic: 'task.arbitration.telemetry', ok_send: false, error: String(e?.message || e || 'telemetry_send_failed') }));
+    }
 
     if (winner === h) {
       console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_DECIDED_WINNER', ts: nowIso(), node_id: h, task_id: picked.task_id, winner, total_claims: norm.length }));
@@ -629,28 +633,32 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
       // Telemetry to creator (NO-SSH proof support)
       try {
         if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
-          networkHandle.send({
-            to: created_by,
-            topic: 'task.arbitration.telemetry',
-            payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_DECIDED_WINNER', winner, total_claims: norm.length },
-            message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_DECIDED_WINNER:${claim_id}`
-          });
+          const topic = 'task.arbitration.telemetry';
+          const message_id = `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_DECIDED_WINNER:${claim_id}`;
+          const payload = { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_DECIDED_WINNER', winner, total_claims: norm.length };
+          console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_ATTEMPT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id }));
+          const tx = networkHandle.send({ to: created_by, topic, payload, message_id });
+          console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id, ok_send: !!tx?.ok }));
         }
-      } catch {}
+      } catch (e) {
+        console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by || null, topic: 'task.arbitration.telemetry', ok_send: false, error: String(e?.message || e || 'telemetry_send_failed') }));
+      }
     } else {
       console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_DECIDED_LOSER', ts: nowIso(), node_id: h, task_id: picked.task_id, winner, total_claims: norm.length }));
 
       // Telemetry to creator (NO-SSH proof support)
       try {
         if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
-          networkHandle.send({
-            to: created_by,
-            topic: 'task.arbitration.telemetry',
-            payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_DECIDED_LOSER', winner, total_claims: norm.length },
-            message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_DECIDED_LOSER:${claim_id}`
-          });
+          const topic = 'task.arbitration.telemetry';
+          const message_id = `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_DECIDED_LOSER:${claim_id}`;
+          const payload = { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_DECIDED_LOSER', winner, total_claims: norm.length };
+          console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_ATTEMPT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id }));
+          const tx = networkHandle.send({ to: created_by, topic, payload, message_id });
+          console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by, topic, message_id, ok_send: !!tx?.ok }));
         }
-      } catch {}
+      } catch (e) {
+        console.log(JSON.stringify({ ok: true, event: 'TELEMETRY_SEND_RESULT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: created_by || null, topic: 'task.arbitration.telemetry', ok_send: false, error: String(e?.message || e || 'telemetry_send_failed') }));
+      }
 
       await saveRuntimeState({ state_path, state });
       return { idle: true, reason: 'LOST_CLAIM_WINDOW', winner };
