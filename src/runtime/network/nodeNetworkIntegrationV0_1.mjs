@@ -321,6 +321,24 @@ export async function startNodeNetworkIntegrationV0_1({
     gossipTimer.unref();
   };
 
+  // Connection guard (single active connection per node_id)
+  let connection_state = 'DISCONNECTED'; // CONNECTING|CONNECTED|DISCONNECTED
+  let reconnect_backoff_ms = 500; // 500ms → 1s → 2s → 5s cap
+  let reconnect_timer = null;
+
+  const scheduleReconnect = () => {
+    if (stopping) return;
+    if (reconnect_timer) return;
+    const delay = Math.max(0, Math.min(5000, reconnect_backoff_ms));
+    log('RELAY_RECONNECT_SCHEDULED', { node_id, delay_ms: delay });
+    reconnect_timer = setTimeout(() => {
+      reconnect_timer = null;
+      void ensureConnected();
+    }, delay);
+    reconnect_timer.unref();
+    reconnect_backoff_ms = Math.min(5000, reconnect_backoff_ms * 2);
+  };
+
   const connectOnce = async ({ relayUrl, index, attempt }) => {
     if (!relayUrl) return { ok: false, error: { code: 'NO_RELAY_URL' } };
     if (!allowLocalRelay && isLocalOnlyUrl(relayUrl)) {
@@ -328,7 +346,17 @@ export async function startNodeNetworkIntegrationV0_1({
       return { ok: false, error: { code: 'LOCAL_RELAY_DISALLOWED' } };
     }
 
-    log('RELAY_CONNECT_ATTEMPT', { node_id, relay_url: relayUrl, index, attempt });
+    if (connection_state === 'CONNECTING') {
+      log('RELAY_CONNECT_SKIPPED_ALREADY_CONNECTING', { node_id, relay_url: relayUrl, index, attempt, state: connection_state });
+      return { ok: false, error: { code: 'ALREADY_CONNECTING' } };
+    }
+    if (connection_state === 'CONNECTED') {
+      log('RELAY_CONNECT_SKIPPED_ALREADY_CONNECTED', { node_id, relay_url: relayUrl, index, attempt, state: connection_state });
+      return { ok: true, ws: activeWs };
+    }
+
+    connection_state = 'CONNECTING';
+    log('RELAY_CONNECT_ATTEMPT', { node_id, relay_url: relayUrl, index, attempt, state: connection_state });
 
     return await new Promise((resolve) => {
       let done = false;
@@ -356,6 +384,7 @@ export async function startNodeNetworkIntegrationV0_1({
       ws.onerror = () => {
         clearTimeout(timeout);
         try { ws.close(); } catch {}
+        connection_state = 'DISCONNECTED';
         finish({ ok: false, error: { code: 'WS_ERROR' } });
       };
 
@@ -369,6 +398,10 @@ export async function startNodeNetworkIntegrationV0_1({
           registered = true;
           state.relay_registered = true;
           state.relay_url = relayUrl;
+          connection_state = 'CONNECTED';
+          reconnect_backoff_ms = 500;
+          try { if (reconnect_timer) clearTimeout(reconnect_timer); } catch {}
+          reconnect_timer = null;
           log('RELAY_REGISTER_OK', { node_id, relay_url: relayUrl });
 
           // Ensure send() can work immediately after register
@@ -434,9 +467,10 @@ export async function startNodeNetworkIntegrationV0_1({
             if (stopping) return;
             state.relay_connected = false;
             state.relay_registered = false;
+            connection_state = 'DISCONNECTED';
             log('RELAY_DISCONNECTED', { node_id, relay_url: relayUrl });
-            // trigger background reconnection
-            void ensureConnected();
+            // schedule reconnect with exponential backoff (no immediate storm)
+            scheduleReconnect();
           };
 
           finish({ ok: true, ws });
@@ -447,6 +481,7 @@ export async function startNodeNetworkIntegrationV0_1({
       ws.onclose = () => {
         if (registered) return;
         clearTimeout(timeout);
+        connection_state = 'DISCONNECTED';
         finish({ ok: false, error: { code: 'CLOSED_BEFORE_REGISTER' } });
       };
     });
@@ -456,6 +491,8 @@ export async function startNodeNetworkIntegrationV0_1({
 
   const ensureConnected = async () => {
     if (reconnecting) return;
+    if (connection_state === 'CONNECTING') return;
+    if (connection_state === 'CONNECTED') return;
     reconnecting = true;
 
     try {
@@ -492,6 +529,7 @@ export async function startNodeNetworkIntegrationV0_1({
       log('RELAY_ALL_CANDIDATES_FAILED', { node_id, relay_urls: relayCandidates });
     } finally {
       reconnecting = false;
+      if (connection_state === 'CONNECTING') connection_state = 'DISCONNECTED';
     }
   };
 
@@ -506,8 +544,11 @@ export async function startNodeNetworkIntegrationV0_1({
       stopping = true;
       try { if (hbTimer) clearInterval(hbTimer); } catch {}
       try { if (gossipTimer) clearInterval(gossipTimer); } catch {}
+      try { if (reconnect_timer) clearTimeout(reconnect_timer); } catch {}
+      reconnect_timer = null;
       try { if (activeWs) activeWs.close(); } catch {}
       activeWs = null;
+      connection_state = 'DISCONNECTED';
     }
   };
 }
