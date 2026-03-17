@@ -291,7 +291,21 @@ export async function startNodeNetworkIntegrationV0_1({
   let stopping = false;
 
   const send = ({ to, topic, payload, message_id = null } = {}) => {
-    if (!state.relay_registered || !activeWs) return { ok: false, error: { code: 'RELAY_NOT_REGISTERED' } };
+    const wsState = activeWs && typeof activeWs.readyState === 'number' ? activeWs.readyState : null;
+
+    log('RELAY_SEND_ATTEMPT', { node_id, to: to || null, topic: topic || null, message_id: message_id || null, relay_registered: !!state.relay_registered, ws_ready_state: wsState });
+
+    if (!state.relay_registered || !activeWs) {
+      log('RELAY_SEND_FAILED', { node_id, to: to || null, topic: topic || null, message_id: message_id || null, error: { code: 'RELAY_NOT_REGISTERED' } });
+      return { ok: false, error: { code: 'RELAY_NOT_REGISTERED' } };
+    }
+
+    // ws: OPEN = 1
+    if (typeof activeWs.readyState === 'number' && activeWs.readyState !== 1) {
+      log('RELAY_SEND_FAILED', { node_id, to: to || null, topic: topic || null, message_id: message_id || null, error: { code: 'WS_NOT_OPEN', ready_state: activeWs.readyState } });
+      return { ok: false, error: { code: 'WS_NOT_OPEN', ready_state: activeWs.readyState } };
+    }
+
     const m = {
       type: 'SEND',
       from: node_id,
@@ -301,8 +315,10 @@ export async function startNodeNetworkIntegrationV0_1({
     };
     try {
       activeWs.send(JSON.stringify(m));
+      log('RELAY_SEND_RESULT', { node_id, to: to || null, topic: topic || null, message_id: message_id || null, ok_send: true });
       return { ok: true };
     } catch (e) {
+      log('RELAY_SEND_RESULT', { node_id, to: to || null, topic: topic || null, message_id: message_id || null, ok_send: false, error: { code: 'SEND_FAILED', reason: String(e?.message || 'send_failed') } });
       return { ok: false, error: { code: 'SEND_FAILED', reason: String(e?.message || 'send_failed') } };
     }
   };
@@ -496,7 +512,16 @@ export async function startNodeNetworkIntegrationV0_1({
             }
 
             if (m2?.type === 'ERROR') {
-              log('RELAY_MESSAGE_RECEIVED', { node_id, error: m2?.error ?? null, message_id: m2?.message_id ?? null });
+              const mid = m2?.message_id ?? null;
+              const err = m2?.error ?? null;
+              log('RELAY_MESSAGE_RECEIVED', { node_id, error: err, message_id: mid });
+
+              // Transport trace: for telemetry sends, surface async relay-side rejection.
+              try {
+                if (typeof mid === 'string' && mid.startsWith('task.telemetry:')) {
+                  log('RELAY_SEND_FAILED', { node_id, message_id: mid, error: { code: 'RELAY_ERROR', relay_error: err } });
+                }
+              } catch {}
             }
           };
 
