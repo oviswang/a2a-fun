@@ -44,26 +44,10 @@ export async function tickTaskNetworkOutboundV0_1({
   const loaded = await loadTasks({ tasks_path });
   const tasks = loaded.table.tasks || [];
 
-  // Determine publish targets
-  // Priority:
-  // 1) explicit TASK_PUBLISH_TO (backward compat)
-  // 2) broadcast to known_peers (peer cache / gossip)
-  // 3) fallback: choose one active peer from bootstrap
+  // Determine publish targets (source-of-truth)
+  // ONLY from explicit publish intent (TASK_PUBLISH_TO). No peer-cache, no gossip, no bootstrap fallback.
   const configuredTo = String(process.env.TASK_PUBLISH_TO || '').trim();
   let toList = configuredTo ? configuredTo.split(',').map((s) => s.trim()).filter(Boolean) : [];
-
-  if (!toList.length && Array.isArray(known_peers) && known_peers.length) {
-    toList = known_peers.map((p) => p?.node_id).filter((x) => x && x !== node_id);
-  }
-
-  if (!toList.length && bootstrap_base_url) {
-    try {
-      const r = await fetch(`${String(bootstrap_base_url).replace(/\/$/, '')}/peers`, { method: 'GET' });
-      const j = await r.json();
-      const peer = pickOnePeer({ peers: j?.peers || [], self: node_id });
-      if (peer?.node_id) toList = [peer.node_id];
-    } catch {}
-  }
 
   toList = Array.from(new Set(toList));
 
@@ -79,7 +63,7 @@ export async function tickTaskNetworkOutboundV0_1({
 
     const targets = toList.slice(0, 50);
 
-    // init delivery state
+    // init / enforce delivery state (single source of truth = explicit targets)
     t.meta.publish_delivery = t.meta.publish_delivery && typeof t.meta.publish_delivery === 'object' ? t.meta.publish_delivery : null;
     if (!t.meta.publish_delivery) {
       t.meta.publish_delivery = {
@@ -98,6 +82,16 @@ export async function tickTaskNetworkOutboundV0_1({
 
       log('TASK_PUBLISH_BROADCAST', { node_id, task_id: t.task_id, peer_count: targets.length });
       await saveTasks({ tasks_path, table: loaded.table });
+    } else {
+      const d0 = t.meta.publish_delivery;
+      const oldTargets = Array.isArray(d0.targets) ? d0.targets : [];
+      const injected = oldTargets.filter((x) => !targets.includes(x));
+      if (injected.length) {
+        log('INVALID_TARGET_INJECTION', { node_id, task_id: t.task_id, injected, expected_targets: targets });
+      }
+      d0.targets = targets;
+      d0.acked_peers = Array.isArray(d0.acked_peers) ? d0.acked_peers : [];
+      d0.pending_peers = targets.filter((x) => !d0.acked_peers.includes(x));
     }
 
     const d = t.meta.publish_delivery;
