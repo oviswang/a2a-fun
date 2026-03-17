@@ -190,6 +190,15 @@ export async function handleTaskRelayMessageV0_1({
 } = {}) {
   const tasks_path = getTasksPath({ workspace_path });
 
+  // Observability: arbitration telemetry (NO-SSH proof support)
+  if (topic === 'task.arbitration.telemetry') {
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const task_id = String(p.task_id || '').trim();
+    const event = String(p.event || '').trim() || null;
+    log('TASK_ARBITRATION_TELEMETRY_RECEIVED', { node_id, task_id, from, event, payload: p });
+    return { ok: true };
+  }
+
   if (topic === 'task.publish') {
     const p = payload && typeof payload === 'object' ? payload : {};
     const task_id = String(p.task_id || '').trim();

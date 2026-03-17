@@ -542,6 +542,18 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
 
     console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_WINDOW_STARTED', ts: nowIso(), node_id: h, task_id: picked.task_id, claim_id, claim_ts, window_ms }));
 
+    // Telemetry to creator (NO-SSH proof support)
+    try {
+      if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
+        networkHandle.send({
+          to: created_by,
+          topic: 'task.arbitration.telemetry',
+          payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_WINDOW_STARTED', claim_id, claim_ts, window_ms },
+          message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_WINDOW_STARTED:${claim_id}`
+        });
+      }
+    } catch {}
+
     // persist our own claim locally
     try {
       const cur = await loadTasks({ tasks_path });
@@ -599,10 +611,47 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
 
     console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_WINDOW_COLLECTED', ts: nowIso(), node_id: h, task_id: picked.task_id, total_claims: norm.length }));
 
+    // Telemetry to creator (NO-SSH proof support)
+    try {
+      if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
+        networkHandle.send({
+          to: created_by,
+          topic: 'task.arbitration.telemetry',
+          payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_WINDOW_COLLECTED', total_claims: norm.length },
+          message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_WINDOW_COLLECTED:${claim_id}`
+        });
+      }
+    } catch {}
+
     if (winner === h) {
       console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_DECIDED_WINNER', ts: nowIso(), node_id: h, task_id: picked.task_id, winner, total_claims: norm.length }));
+
+      // Telemetry to creator (NO-SSH proof support)
+      try {
+        if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
+          networkHandle.send({
+            to: created_by,
+            topic: 'task.arbitration.telemetry',
+            payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_DECIDED_WINNER', winner, total_claims: norm.length },
+            message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_DECIDED_WINNER:${claim_id}`
+          });
+        }
+      } catch {}
     } else {
       console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_DECIDED_LOSER', ts: nowIso(), node_id: h, task_id: picked.task_id, winner, total_claims: norm.length }));
+
+      // Telemetry to creator (NO-SSH proof support)
+      try {
+        if (networkHandle && typeof networkHandle.send === 'function' && created_by) {
+          networkHandle.send({
+            to: created_by,
+            topic: 'task.arbitration.telemetry',
+            payload: { task_id: picked.task_id, node_id: h, event: 'TASK_CLAIM_DECIDED_LOSER', winner, total_claims: norm.length },
+            message_id: `task.telemetry:${picked.task_id}:${created_by}:${h}:TASK_CLAIM_DECIDED_LOSER:${claim_id}`
+          });
+        }
+      } catch {}
+
       await saveRuntimeState({ state_path, state });
       return { idle: true, reason: 'LOST_CLAIM_WINDOW', winner };
     }
