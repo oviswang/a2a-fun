@@ -16,6 +16,7 @@ import { sendPeerGossip } from '../peers/peerGossipTransport.mjs';
 import { recordTaskExecuted } from '../peers/peerStats.mjs'; 
 import { fetchAndValidateNetworkStats } from './joinNetworkSignalStats.mjs'; 
 import { checkAndMaybeAutoUpgrade } from './autoUpgrade.mjs'; 
+import { runAutoRecoveryCheck } from './autoRecovery.mjs'; 
  
 function nowIso() { 
  return new Date().toISOString(); 
@@ -65,7 +66,11 @@ export async function loadRuntimeState({ state_path } = {}) {
  last_upgrade_attempt_at: null, 
  last_upgrade_success_at: null, 
  last_upgrade_target: null, 
- last_upgrade_error: null 
+ last_upgrade_error: null, 
+ last_recovery_check_at: null, 
+ last_recovery_action_at: null, 
+ last_recovery_action: null, 
+ last_recovery_error: null 
  } 
  }; 
  } 
@@ -141,6 +146,13 @@ const rand = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
  try {
   if (daemon) {
    await checkAndMaybeAutoUpgrade({ workspace_path: ws, holder: h, state, state_path, checkEveryHours: 6 }).catch(() => null);
+  }
+ } catch {}
+
+ // AUTO_UPGRADE_PLUS_AUTO_RECOVERY_V1: low-frequency safe auto-recovery (best-effort)
+ try {
+  if (daemon) {
+   await runAutoRecoveryCheck({ workspace_path: ws, holder: h, state, state_path, checkEveryMinutes: 10 }).catch(() => null);
   }
  } catch {}
  
