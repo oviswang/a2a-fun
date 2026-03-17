@@ -1,0 +1,59 @@
+# a2a-fun daemon (NODE_SUPERVISOR_LAYER_V1)
+#
+# Responsibility boundary:
+# - systemd supervises the daemon process (start/restart if missing)
+# - in-daemon auto-recovery handles plugin/gateway L1 recovery only
+#
+# Install example:
+#   sudo mkdir -p /etc/systemd/system
+#   sudo cp ops/systemd/a2a-fun-daemon.service /etc/systemd/system/a2a-fun-daemon.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now a2a-fun-daemon
+#
+# Notes:
+# - Do NOT delete data/
+# - Do NOT change node identity if data/node_id exists
+
+[Unit]
+Description=a2a-fun agent runtime loop (daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/a2a-fun
+
+# Auto-restart supervisor layer
+Restart=always
+RestartSec=3
+
+# Optional env overrides
+Environment=PORT=3000
+Environment=RELAY_URL=wss://bootstrap.a2a.fun/relay
+Environment=ENABLE_RELAY_INBOUND=true
+Environment=A2A_WORKSPACE_PATH=%h/a2a-fun
+
+# Holder/node identity:
+# - prefer persisted data/node_id
+# - otherwise create once
+ExecStart=/bin/bash -lc '
+set -euo pipefail
+cd "$A2A_WORKSPACE_PATH"
+mkdir -p data
+if [ -f data/node_id ]; then
+  HOLDER=$(cat data/node_id)
+else
+  HOLDER="$(hostname)-$(openssl rand -hex 2)"
+  echo "$HOLDER" > data/node_id
+fi
+export NODE_ID="$HOLDER"
+export A2A_AGENT_ID="$HOLDER"
+exec node scripts/run_agent_loop.mjs --daemon --holder "$HOLDER"
+'
+
+# Hardening (minimal)
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
