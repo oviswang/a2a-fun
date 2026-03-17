@@ -3,5 +3,8 @@ node_modules/
 .env
 .DS_Store
 coverage/
+.tmp/
 data/*.json*
 data/*.tmp*
+data/node_id
+data/daemon.lock
