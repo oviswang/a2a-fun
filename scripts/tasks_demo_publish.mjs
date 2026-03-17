@@ -1,6 +1,21 @@
 #!/usr/bin/env node
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { createTask } from '../src/tasks/taskSchema.mjs';
 import { getTasksPath, publishTask } from '../src/tasks/taskStore.mjs';
+
+async function loadPeerTargets({ workspace_path } = {}) {
+  try {
+    const p = path.join(workspace_path, 'data', 'peer-cache.json');
+    const j = JSON.parse(await fs.readFile(p, 'utf8'));
+    const peers = Array.isArray(j?.peers) ? j.peers : [];
+    const ids = peers.map((x) => String(x?.node_id || '').trim()).filter(Boolean);
+    // de-dupe
+    return Array.from(new Set(ids));
+  } catch {
+    return [];
+  }
+}
 
 function parseArgs(argv) {
   const out = { type: 'run_check', topic: 'relay', created_by: 'local', input: {}, requires: null };
@@ -29,6 +44,21 @@ if (!made.ok) {
   console.log(JSON.stringify(made, null, 2));
   process.exit(1);
 }
+
+// State-consistency: initialize publish_delivery ONCE at task creation using current peer-cache targets.
+// This prevents ACK handler from creating a shadow delivery state.
+const targets = await loadPeerTargets({ workspace_path });
+made.task.meta = made.task.meta && typeof made.task.meta === 'object' ? made.task.meta : {};
+made.task.meta.publish_delivery = {
+  created_at: new Date().toISOString(),
+  targets,
+  pending_peers: targets.slice(),
+  acked_peers: [],
+  attempts: 0,
+  last_try_at: null,
+  complete: false,
+  incomplete: false
+};
 
 const pub = await publishTask({ tasks_path, task: made.task });
 console.log(JSON.stringify({

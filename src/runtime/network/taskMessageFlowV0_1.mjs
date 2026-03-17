@@ -294,27 +294,14 @@ export async function handleTaskRelayMessageV0_1({
     if (t) {
       t.meta = t.meta && typeof t.meta === 'object' ? t.meta : {};
 
-      // Event-driven delivery tracking: ACK events are source of truth.
-      let d = t.meta.publish_delivery && typeof t.meta.publish_delivery === 'object' ? t.meta.publish_delivery : null;
+      // Event-driven delivery tracking: ACK events mutate a single persisted delivery state.
+      const d = t.meta.publish_delivery && typeof t.meta.publish_delivery === 'object' ? t.meta.publish_delivery : null;
 
-      // Lazily reconstruct delivery tracking if missing/out-of-sync.
+      // State-consistency rule: do NOT recreate publish_delivery here.
       if (!d) {
-        const configuredTo = String(process.env.TASK_PUBLISH_TO || '').trim();
-        const inferredTargets = configuredTo
-          ? configuredTo.split(',').map((s) => s.trim()).filter(Boolean)
-          : [];
-
-        d = {
-          created_at: nowIso(),
-          targets: inferredTargets,
-          pending_peers: inferredTargets.slice(),
-          acked_peers: [],
-          attempts: 0,
-          last_try_at: null,
-          complete: false,
-          incomplete: false
-        };
-        t.meta.publish_delivery = d;
+        log('DELIVERY_STATE_SNAPSHOT', { node_id, task_id, targets: null, acked: null, warning: 'missing_publish_delivery' });
+        await saveTasks({ tasks_path, table: loaded.table });
+        return { ok: true };
       }
 
       if (received_by) {
@@ -322,25 +309,14 @@ export async function handleTaskRelayMessageV0_1({
         d.acked_peers = Array.isArray(d.acked_peers) ? d.acked_peers : [];
         d.pending_peers = Array.isArray(d.pending_peers) ? d.pending_peers : [];
 
-        // If targets were unknown at init time, expand targets as we see ACKs (best-effort).
-        // Also: if we observe ACKs from additional peers not in targets (e.g. due to init race),
-        // treat them as intended targets so DELIVERY_COMPLETE can reflect reality.
-        if (!d.targets.length) {
-          d.targets = [received_by];
-          d.pending_peers = [received_by];
-        } else if (!d.targets.includes(received_by)) {
-          d.targets.push(received_by);
-        }
-
         if (!d.acked_peers.includes(received_by)) d.acked_peers.push(received_by);
         d.pending_peers = d.pending_peers.filter((x) => x !== received_by);
 
         const targetSet = new Set(d.targets);
         const ackSet = new Set(d.acked_peers);
-        let covered = true;
-        for (const tid of targetSet) {
-          if (!ackSet.has(tid)) { covered = false; break; }
-        }
+        const covered = d.targets.length > 0 && ackSet.size >= targetSet.size && Array.from(targetSet).every((x) => ackSet.has(x));
+
+        log('DELIVERY_STATE_SNAPSHOT', { node_id, task_id, targets: d.targets, acked: d.acked_peers });
 
         if (covered && d.complete !== true) {
           d.complete = true;
