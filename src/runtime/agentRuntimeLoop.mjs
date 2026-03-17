@@ -574,7 +574,7 @@ try {
 
     const uniq = Array.from(new Set(targets));
     for (const to of uniq.slice(0, 50)) {
-      const tx = networkHandle.send({ to, topic: 'task.claim', payload });
+      const tx = networkHandle.send({ to, topic: 'task.claim', payload, message_id: `task.claim:${picked.task_id}:${to}` });
       if (tx?.ok) {
         console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to }));
       } else {

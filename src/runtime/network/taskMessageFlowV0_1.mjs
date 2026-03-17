@@ -75,7 +75,7 @@ export async function tickTaskNetworkOutboundV0_1({
         input: t.input
       };
 
-      const tx = send({ to, topic: 'task.publish', payload });
+      const tx = send({ to, topic: 'task.publish', payload, message_id: `task.publish:${t.task_id}:${to}` });
       if (tx?.ok) {
         sentOk++;
         log('TASK_PUBLISH_SENT', { node_id, task_id: t.task_id, to });
@@ -109,7 +109,7 @@ export async function tickTaskNetworkOutboundV0_1({
       result: t.status === 'completed' ? t.result : { ok: false, error: t.error || { code: 'FAILED' } }
     };
 
-    const tx = send({ to: created_by, topic: 'task.result', payload });
+    const tx = send({ to: created_by, topic: 'task.result', payload, message_id: `task.result:${t.task_id}:${created_by}` });
     if (tx?.ok) {
       log('TASK_RESULT_SENT', { node_id, task_id: t.task_id, to: created_by });
       t.meta.task_result_sent = true;
