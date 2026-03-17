@@ -1,10 +1,12 @@
-import { createRelayServerV2 } from './relayServerV2.mjs';
+import { createRelayCoreV0_1 } from './relayCoreV0_1.mjs';
 
-const port = Number(process.env.RELAY_PORT || 3110);
-const bindHost = process.env.RELAY_BIND || '127.0.0.1';
+const port = Number(process.env.RELAY_PORT || 18884);
+// IMPORTANT: externally reachable by default
+const bindHost = process.env.RELAY_BIND || '0.0.0.0';
+const wsPath = process.env.RELAY_WS_PATH || '/relay';
 
-const srv = createRelayServerV2({ bindHost, port, wsPath: '/relay' });
+const srv = createRelayCoreV0_1({ bindHost, port, wsPath });
 await srv.start();
 
 // eslint-disable-next-line no-console
-console.log(`a2a-relay listening on ws://${bindHost}:${port}/relay`);
+console.log(`a2a-relay listening on ws://${bindHost}:${port}${wsPath}`);
