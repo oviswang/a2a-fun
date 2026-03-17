@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises'; 
 import path from 'node:path'; 
+import { randomUUID } from 'node:crypto';
  
 import { discoverPeers } from '../peers/discoverPeers.mjs'; 
 import { getPeersPath, savePeers } from '../peers/peerStore.mjs'; 
  
-import { getTasksPath, loadTasks, acceptTask, markRunning, completeTask, failTask } from '../tasks/taskStore.mjs'; 
+import { getTasksPath, loadTasks, saveTasks, acceptTask, markRunning, completeTask, failTask } from '../tasks/taskStore.mjs'; 
 import { executeTask } from '../tasks/taskExecutor.mjs'; 
 import { sendTaskResult } from '../tasks/taskTransport.mjs'; 
 import { sendTaskSyncRequest } from '../tasks/taskSyncTransport.mjs'; 
@@ -529,6 +530,85 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
  console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SELECTED', mode, holder: h, task_id: picked.task_id })); 
  console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_TASK_PICKED', mode, holder: h, task_id: picked.task_id })); 
  
+ // D) execution gate for remote-published broadcast tasks: claim window must finish before accept/execute
+ {
+  const created_by = String(picked?.created_by || '').trim();
+  const isRemoteBroadcast = !!(picked?.meta && typeof picked.meta === 'object' && picked.meta.received_from) && created_by && created_by !== h;
+
+  if (daemon && isRemoteBroadcast) {
+    const claim_id = randomUUID();
+    const claim_ts = Date.now();
+    const window_ms = 500;
+
+    console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_WINDOW_STARTED', ts: nowIso(), node_id: h, task_id: picked.task_id, claim_id, claim_ts, window_ms }));
+
+    // persist our own claim locally
+    try {
+      const cur = await loadTasks({ tasks_path });
+      const curTask = cur.table.tasks.find((t) => t.task_id === picked.task_id) || null;
+      if (curTask) {
+        curTask.meta = curTask.meta && typeof curTask.meta === 'object' ? curTask.meta : {};
+        const claims = Array.isArray(curTask.meta.claims) ? curTask.meta.claims : [];
+        claims.push({ task_id: picked.task_id, claimed_by: h, claim_ts, claim_id, from: h, seen_at: nowIso() });
+        curTask.meta.claims = claims;
+        await saveTasks({ tasks_path, table: cur.table });
+      }
+    } catch {}
+
+    // broadcast claim proposal (best-effort)
+    try {
+      if (networkHandle && typeof networkHandle.send === 'function') {
+        const targets = [];
+        if (created_by) targets.push(created_by);
+        const kp = networkHandle?.state?.known_peers;
+        if (Array.isArray(kp)) {
+          for (const p of kp) {
+            const tid = String(p?.node_id || '').trim();
+            if (!tid || tid === h) continue;
+            targets.push(tid);
+          }
+        }
+        const uniq = Array.from(new Set(targets));
+        const payload = { task_id: picked.task_id, claimed_by: h, claim_ts, claim_id };
+        for (const to of uniq.slice(0, 50)) {
+          networkHandle.send({ to, topic: 'task.claim', payload, message_id: `task.claim:${picked.task_id}:${to}:${claim_id}` });
+        }
+      }
+    } catch {}
+
+    await sleep(window_ms);
+
+    // collect claims observed during the window
+    let claims = [];
+    try {
+      const cur = await loadTasks({ tasks_path });
+      const curTask = cur.table.tasks.find((t) => t.task_id === picked.task_id) || null;
+      claims = Array.isArray(curTask?.meta?.claims) ? curTask.meta.claims : [];
+    } catch {}
+
+    // normalize + decide winner
+    const norm = [];
+    for (const c of claims || []) {
+      const by = String(c?.claimed_by || '').trim();
+      const tsn = Number(c?.claim_ts);
+      if (!by || !Number.isFinite(tsn)) continue;
+      norm.push({ claimed_by: by, claim_ts: tsn });
+    }
+    norm.sort((a, b) => (a.claim_ts - b.claim_ts) || String(a.claimed_by).localeCompare(String(b.claimed_by)));
+    const winner = norm[0]?.claimed_by || h;
+
+    console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_WINDOW_COLLECTED', ts: nowIso(), node_id: h, task_id: picked.task_id, total_claims: norm.length }));
+
+    if (winner === h) {
+      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_DECIDED_WINNER', ts: nowIso(), node_id: h, task_id: picked.task_id, winner, total_claims: norm.length }));
+    } else {
+      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_DECIDED_LOSER', ts: nowIso(), node_id: h, task_id: picked.task_id, winner, total_claims: norm.length }));
+      await saveRuntimeState({ state_path, state });
+      return { idle: true, reason: 'LOST_CLAIM_WINDOW', winner };
+    }
+  }
+ }
+
  // D) accept + execute 
  console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_ATTEMPT', ts: nowIso(), node_id: h, task_id: picked.task_id }));
  const acc = await acceptTask({ tasks_path, task_id: picked.task_id, holder: h }); 
