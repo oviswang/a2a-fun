@@ -366,7 +366,17 @@ export async function startNodeNetworkIntegrationV0_1({
         resolve(v);
       };
 
+      // Hard global guard: prevent multiple independent WebSocket creators in the same process.
+      const g = globalThis;
+      if (g.__A2A_ACTIVE_RELAY_WS__ && g.__A2A_ACTIVE_RELAY_WS__.readyState && g.__A2A_ACTIVE_RELAY_WS__.readyState !== 3) {
+        log('RELAY_CONNECT_BLOCKED_DUPLICATE', { node_id, relay_url: relayUrl, state: connection_state });
+        connection_state = 'DISCONNECTED';
+        finish({ ok: false, error: { code: 'DUPLICATE_WS_BLOCKED' } });
+        return;
+      }
+
       const ws = new WebSocket(relayUrl);
+      g.__A2A_ACTIVE_RELAY_WS__ = ws;
       let registered = false;
 
       const timeout = setTimeout(() => {
@@ -468,6 +478,7 @@ export async function startNodeNetworkIntegrationV0_1({
             state.relay_connected = false;
             state.relay_registered = false;
             connection_state = 'DISCONNECTED';
+            try { if (globalThis.__A2A_ACTIVE_RELAY_WS__ === ws) globalThis.__A2A_ACTIVE_RELAY_WS__ = null; } catch {}
             log('RELAY_DISCONNECTED', { node_id, relay_url: relayUrl });
             // schedule reconnect with exponential backoff (no immediate storm)
             scheduleReconnect();
@@ -482,6 +493,7 @@ export async function startNodeNetworkIntegrationV0_1({
         if (registered) return;
         clearTimeout(timeout);
         connection_state = 'DISCONNECTED';
+        try { if (globalThis.__A2A_ACTIVE_RELAY_WS__ === ws) globalThis.__A2A_ACTIVE_RELAY_WS__ = null; } catch {}
         finish({ ok: false, error: { code: 'CLOSED_BEFORE_REGISTER' } });
       };
     });
