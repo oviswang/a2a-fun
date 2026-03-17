@@ -35,9 +35,9 @@ async function copyDirRecursive(src, dst) {
 async function loadPluginsJson({ execImpl = execFileAsync } = {}) {
   try {
     const { stdout } = await execImpl('openclaw', ['plugins', 'list', '--json']);
-    return JSON.parse(String(stdout || ''));
+    return { ok: true, json: JSON.parse(String(stdout || '')) };
   } catch {
-    return null;
+    return { ok: false, error: { code: 'OPENCLAW_CLI_UNAVAILABLE' } };
   }
 }
 
@@ -56,12 +56,16 @@ async function gatewayRouteAlive({ fetchImpl = globalThis.fetch } = {}) {
   }
 }
 
-async function daemonRunning({ execImpl = execFileAsync } = {}) {
+async function daemonCount({ execImpl = execFileAsync } = {}) {
   try {
-    const { stdout } = await execImpl('bash', ['-lc', 'ps aux | grep run_agent_loop | grep -v grep >/dev/null && echo yes || echo no']);
-    return safeStr(stdout) === 'yes';
+    const { stdout } = await execImpl('bash', [
+      '-lc',
+      'ps aux | grep "node scripts/run_agent_loop.mjs --daemon" | grep -v grep | wc -l'
+    ]);
+    const n = Number(String(stdout || '').trim());
+    return Number.isFinite(n) ? n : 0;
   } catch {
-    return false;
+    return 0;
   }
 }
 
@@ -114,65 +118,108 @@ export async function runAutoRecoveryCheck({
     if (extra && typeof extra === 'object') state.last_recovery_action_meta = extra;
   };
 
+  const within30mSameAction = (action) => {
+    const lastAt = Date.parse(state.last_recovery_action_at || '');
+    const lastAction = safeStr(state.last_recovery_action || '');
+    if (!lastAction || !Number.isFinite(lastAt)) return false;
+    if (lastAction !== action) return false;
+    return (Date.now() - lastAt) < 30 * 60 * 1000;
+  };
+
   const recordError = (code, message, details = null) => {
     state.last_recovery_action_at = nowIso();
     state.last_recovery_error = { at: nowIso(), code, message: safeStr(message), details };
   };
 
+  let gatewayRestartedThisCycle = false;
+  let gatewayOk = await gatewayRouteAlive({ fetchImpl: fetch0 });
+
   // C) gateway route unavailable
-  const gwOk0 = await gatewayRouteAlive({ fetchImpl: fetch0 });
-  if (!gwOk0) {
-    try {
-      // Verify plugin presence; restart gateway; retest.
-      const repoPluginDir = path.join(ws, 'ops', 'openclaw', 'extensions', 'a2a-send');
-      const livePluginDir = path.join(os.homedir(), '.openclaw', 'extensions', 'a2a-send');
-      if (await fileExists(repoPluginDir)) {
-        if (!(await fileExists(livePluginDir))) await copyDirRecursive(repoPluginDir, livePluginDir);
-      }
+  if (!gatewayOk) {
+    if (within30mSameAction('GATEWAY_RESTARTED')) {
+      console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_SKIPPED', reason: 'RATE_LIMIT', category: 'gateway' }));
+    } else {
+      try {
+        // Verify plugin presence; restart gateway; retest.
+        const repoPluginDir = path.join(ws, 'ops', 'openclaw', 'extensions', 'a2a-send');
+        const livePluginDir = path.join(os.homedir(), '.openclaw', 'extensions', 'a2a-send');
+        if (await fileExists(repoPluginDir)) {
+          if (!(await fileExists(livePluginDir))) await copyDirRecursive(repoPluginDir, livePluginDir);
+        }
 
-      await restartGatewayDetached({ execImpl: exec0 });
-      console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_GATEWAY_RESTARTED' }));
-      recordAction('GATEWAY_RESTARTED');
+        await restartGatewayDetached({ execImpl: exec0 });
+        gatewayRestartedThisCycle = true;
+        console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_GATEWAY_RESTARTED' }));
+        recordAction('GATEWAY_RESTARTED');
 
-      const gwOk1 = await gatewayRouteAlive({ fetchImpl: fetch0 });
-      if (!gwOk1) {
-        recordError('GATEWAY_ROUTE_STILL_DOWN', 'gateway route still unavailable after restart');
+        gatewayOk = await gatewayRouteAlive({ fetchImpl: fetch0 });
+        if (!gatewayOk) {
+          recordError('GATEWAY_ROUTE_STILL_DOWN', 'gateway route still unavailable after restart');
+          console.log(JSON.stringify({ ok: false, event: 'AUTO_RECOVERY_ERROR', error: state.last_recovery_error }));
+        }
+      } catch (e) {
+        recordError('GATEWAY_RECOVERY_FAILED', e?.message || String(e));
         console.log(JSON.stringify({ ok: false, event: 'AUTO_RECOVERY_ERROR', error: state.last_recovery_error }));
       }
-    } catch (e) {
-      recordError('GATEWAY_RECOVERY_FAILED', e?.message || String(e));
-      console.log(JSON.stringify({ ok: false, event: 'AUTO_RECOVERY_ERROR', error: state.last_recovery_error }));
     }
   }
 
   // B) plugin missing or not loaded
+  let pluginOk = true;
   try {
     const livePluginDir = path.join(os.homedir(), '.openclaw', 'extensions', 'a2a-send');
-    const plugins = await loadPluginsJson({ execImpl: exec0 });
-    const a2a =
-      !!plugins && Array.isArray(plugins.plugins) ? plugins.plugins.find((p) => p && p.id === 'a2a-send') : null;
-    const pluginLoaded = !!a2a && a2a.enabled === true && a2a.status === 'loaded' && Number(a2a.httpRoutes || 0) >= 1;
     const pluginDirOk = await fileExists(livePluginDir);
 
-    if (!pluginDirOk || !pluginLoaded) {
-      const repoPluginDir = path.join(ws, 'ops', 'openclaw', 'extensions', 'a2a-send');
-      await copyDirRecursive(repoPluginDir, livePluginDir);
-      await restartGatewayDetached({ execImpl: exec0 });
-      console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_PLUGIN_RESYNCED' }));
-      recordAction('PLUGIN_RESYNCED');
+    const pluginsRes = await loadPluginsJson({ execImpl: exec0 });
+    if (!pluginsRes.ok) {
+      // PATCH 2: CLI failure ≠ system failure
+      console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_SKIPPED', reason: 'OPENCLAW_CLI_UNAVAILABLE' }));
+    } else {
+      const plugins = pluginsRes.json;
+      const a2a =
+        !!plugins && Array.isArray(plugins.plugins) ? plugins.plugins.find((p) => p && p.id === 'a2a-send') : null;
+      const pluginLoaded = !!a2a && a2a.enabled === true && a2a.status === 'loaded' && Number(a2a.httpRoutes || 0) >= 1;
+      pluginOk = pluginDirOk && pluginLoaded;
+
+      if (!pluginOk) {
+        if (within30mSameAction('PLUGIN_RESYNCED')) {
+          console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_SKIPPED', reason: 'RATE_LIMIT', category: 'plugin' }));
+        } else {
+          const repoPluginDir = path.join(ws, 'ops', 'openclaw', 'extensions', 'a2a-send');
+          await copyDirRecursive(repoPluginDir, livePluginDir);
+          // PATCH 3: single-run dedup (skip gateway restart if already restarted)
+          if (!gatewayRestartedThisCycle) {
+            await restartGatewayDetached({ execImpl: exec0 });
+            console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_GATEWAY_RESTARTED' }));
+            gatewayRestartedThisCycle = true;
+          }
+          console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_PLUGIN_RESYNCED' }));
+          recordAction('PLUGIN_RESYNCED');
+        }
+      }
     }
   } catch (e) {
     recordError('PLUGIN_RECOVERY_FAILED', e?.message || String(e));
     console.log(JSON.stringify({ ok: false, event: 'AUTO_RECOVERY_ERROR', error: state.last_recovery_error }));
   }
 
-  // A) daemon missing
+  // A) daemon missing (strict detection)
+  let daemonOk = true;
   try {
-    const running = await daemonRunning({ execImpl: exec0 });
-    if (!running) {
-      await restartDaemonDetached({ workspace_path: ws, holder: h, execImpl: exec0 });
-      console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_DAEMON_RESTARTED' }));
-      recordAction('DAEMON_RESTARTED');
+    const n = await daemonCount({ execImpl: exec0 });
+    if (n > 1) {
+      daemonOk = true; // system has daemons, but we refuse to spawn more
+      console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_SKIPPED', reason: 'MULTIPLE_DAEMONS_DETECTED', count: n }));
+    } else if (n === 0) {
+      daemonOk = false;
+      if (within30mSameAction('DAEMON_RESTARTED')) {
+        console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_SKIPPED', reason: 'RATE_LIMIT', category: 'daemon' }));
+      } else {
+        await restartDaemonDetached({ workspace_path: ws, holder: h, execImpl: exec0 });
+        console.log(JSON.stringify({ ok: true, event: 'AUTO_RECOVERY_DAEMON_RESTARTED' }));
+        recordAction('DAEMON_RESTARTED');
+        daemonOk = true; // assume started
+      }
     }
   } catch (e) {
     recordError('DAEMON_RECOVERY_FAILED', e?.message || String(e));
@@ -180,16 +227,31 @@ export async function runAutoRecoveryCheck({
   }
 
   // Runtime state exists + valid JSON (non-destructive signal only)
+  let runtimeOk = true;
   try {
     const p = path.join(ws, 'data', 'runtime_state.json');
     if (await fileExists(p)) {
       JSON.parse(await fs.readFile(p, 'utf8'));
     }
   } catch (e) {
+    runtimeOk = false;
     // do not auto-recover by clearing state
     recordError('RUNTIME_STATE_INVALID_JSON', e?.message || String(e));
     console.log(JSON.stringify({ ok: false, event: 'AUTO_RECOVERY_ERROR', error: state.last_recovery_error }));
   }
+
+  // PATCH 5: one summary log per cycle
+  console.log(
+    JSON.stringify({
+      ok: true,
+      event: 'AUTO_RECOVERY_SUMMARY',
+      daemon_ok: daemonOk,
+      plugin_ok: pluginOk,
+      gateway_ok: gatewayOk,
+      runtime_state_ok: runtimeOk,
+      action_taken: safeStr(state.last_recovery_action || '') || null
+    })
+  );
 
   return { ok: true };
 }
