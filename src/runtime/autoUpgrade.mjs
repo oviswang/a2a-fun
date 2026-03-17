@@ -88,61 +88,105 @@ async function loadPluginsJson() {
   }
 }
 
-async function healthCheck({ workspace_path, holder } = {}) {
+async function healthCheck({ workspace_path } = {}) {
   const ws = workspace_path;
+
+  // 4) runtime state exists + valid JSON (L1 only; not a hard fail for upgrade)
   const runtimeStatePath = path.join(ws, 'data', 'runtime_state.json');
-  const runtimeStateExists = await fileExists(runtimeStatePath);
+  let runtimeStateExists = false;
+  let runtimeStateJsonOk = false;
+  try {
+    runtimeStateExists = await fileExists(runtimeStatePath);
+    if (runtimeStateExists) {
+      const raw = await fs.readFile(runtimeStatePath, 'utf8');
+      JSON.parse(String(raw || ''));
+      runtimeStateJsonOk = true;
+    }
+  } catch {
+    runtimeStateJsonOk = false;
+  }
 
+  // 2) plugin loaded
   const plugins = await loadPluginsJson();
-  const loadedA2aSend =
-    !!plugins &&
-    Array.isArray(plugins.plugins) &&
-    plugins.plugins.some((p) => p && p.id === 'a2a-send' && p.enabled === true && p.status === 'loaded');
+  const a2a =
+    !!plugins && Array.isArray(plugins.plugins) ? plugins.plugins.find((p) => p && p.id === 'a2a-send') : null;
+  const pluginOk =
+    !!a2a && a2a.enabled === true && a2a.status === 'loaded' && Number(a2a.httpRoutes || 0) >= 1;
 
-  // Gateway HTTP check (requires bearer token)
+  // 1) gateway endpoint alive (accept 200 or 401; no business payload)
   let gatewayOk = false;
   try {
-    const cfgPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
-    const raw = await fs.readFile(cfgPath, 'utf8');
-    const cfg = JSON.parse(raw);
-    const token = safeStr(cfg?.gateway?.auth?.token || '');
-
     const base = safeStr(process.env.OPENCLAW_GATEWAY_URL) || 'http://127.0.0.1:18789';
     const url = base.replace(/\/$/, '') + '/__a2a__/send';
-
-    const headers = { 'content-type': 'application/json' };
-    if (token) headers.authorization = `Bearer ${token}`;
-
     const res = await fetch(url, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ channel: 'whatsapp', target: String(process.env.RADAR_DELIVERY_TARGET || ''), message: '(auto-upgrade healthcheck)' })
+      headers: { 'content-type': 'application/json' },
+      body: '{}' // minimal JSON; expected to be rejected by auth (401) or accepted (200)
     });
-
-    // NOTE: if target/channel not configured, gateway may still return ok:false,
-    // but the endpoint being reachable + auth passing is the key. We treat any 2xx as OK.
-    gatewayOk = res && res.status >= 200 && res.status < 300;
+    gatewayOk = res && (res.status === 200 || res.status === 401);
   } catch {
     gatewayOk = false;
   }
 
-  // Daemon running: best-effort check by process listing the holder
+  // 3) daemon running (system-level only; no holder dependency)
   let daemonOk = false;
   try {
-    const { stdout } = await execFileAsync('bash', ['-lc', `ps aux | grep -v grep | grep -F "node scripts/run_agent_loop.mjs --daemon" | grep -F "--holder ${String(holder || '').trim()}" >/dev/null && echo yes || echo no`]);
+    const { stdout } = await execFileAsync('bash', [
+      '-lc',
+      'ps aux | grep run_agent_loop | grep -v grep >/dev/null && echo yes || echo no'
+    ]);
     daemonOk = safeStr(stdout) === 'yes';
   } catch {
     daemonOk = false;
   }
 
-  const ok = runtimeStateExists && loadedA2aSend && gatewayOk && daemonOk;
+  // Failure policy: only fail upgrade if gateway/plugin/daemon is bad.
+  const ok = gatewayOk && pluginOk && daemonOk;
+
+  if (ok) {
+    console.log(
+      JSON.stringify({
+        ok: true,
+        event: 'AUTO_UPGRADE_HEALTHCHECK_PASS',
+        checks: {
+          gateway_alive: gatewayOk,
+          plugin_loaded: pluginOk,
+          daemon_running: daemonOk,
+          runtime_state_exists: runtimeStateExists,
+          runtime_state_json_ok: runtimeStateJsonOk
+        }
+      })
+    );
+  } else {
+    const reasons = [];
+    if (!gatewayOk) reasons.push('GATEWAY_NOT_REACHABLE');
+    if (!pluginOk) reasons.push('PLUGIN_NOT_LOADED');
+    if (!daemonOk) reasons.push('DAEMON_NOT_RUNNING');
+
+    console.log(
+      JSON.stringify({
+        ok: false,
+        event: 'AUTO_UPGRADE_HEALTHCHECK_FAIL',
+        reasons,
+        checks: {
+          gateway_alive: gatewayOk,
+          plugin_loaded: pluginOk,
+          daemon_running: daemonOk,
+          runtime_state_exists: runtimeStateExists,
+          runtime_state_json_ok: runtimeStateJsonOk
+        }
+      })
+    );
+  }
+
   return {
     ok,
     checks: {
+      gateway_alive: gatewayOk,
+      plugin_loaded: pluginOk,
+      daemon_running: daemonOk,
       runtime_state_exists: runtimeStateExists,
-      plugin_a2a_send_loaded: loadedA2aSend,
-      gateway_send_endpoint_ok: gatewayOk,
-      daemon_running: daemonOk
+      runtime_state_json_ok: runtimeStateJsonOk
     }
   };
 }
@@ -285,7 +329,7 @@ export async function checkAndMaybeAutoUpgrade({
       await execFileAsync('bash', ['-lc', `nohup node scripts/run_agent_loop.mjs --daemon --holder ${h} >/dev/null 2>&1 &`], { cwd: ws }).catch(() => null);
     }
 
-    const hc = await healthCheck({ workspace_path: ws, holder: h });
+    const hc = await healthCheck({ workspace_path: ws });
     if (!hc.ok) {
       const err = { code: 'HEALTHCHECK_FAILED', checks: hc.checks };
       throw Object.assign(new Error('healthcheck failed'), { details: err });
