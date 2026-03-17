@@ -59,6 +59,55 @@ async function writeJsonAtomic(p, obj) {
   await fs.rename(tmp, p);
 }
 
+function normalizePeer(p) {
+  if (!p) return null;
+  const node_id = String(p.node_id || '').trim();
+  if (!node_id) return null;
+  const relay_urls = Array.isArray(p.relay_urls) ? dedupPreserveOrder(p.relay_urls) : [];
+  const capabilities = p.capabilities && typeof p.capabilities === 'object' ? p.capabilities : {};
+  const last_seen = p.last_seen ? String(p.last_seen) : null;
+  return { node_id, relay_urls, capabilities, last_seen };
+}
+
+function mergePeersByNodeId({ existing = [], incoming = [], selfNodeId = null } = {}) {
+  const map = new Map();
+
+  for (const p of existing) {
+    const n = normalizePeer(p);
+    if (!n) continue;
+    if (selfNodeId && n.node_id === selfNodeId) continue;
+    map.set(n.node_id, n);
+  }
+
+  let added = 0;
+  let updated = 0;
+
+  for (const p of incoming) {
+    const n = normalizePeer(p);
+    if (!n) continue;
+    if (selfNodeId && n.node_id === selfNodeId) continue;
+
+    const prev = map.get(n.node_id);
+    if (!prev) {
+      map.set(n.node_id, n);
+      added++;
+      continue;
+    }
+
+    const merged = {
+      node_id: prev.node_id,
+      relay_urls: dedupPreserveOrder([...(prev.relay_urls || []), ...(n.relay_urls || [])]),
+      capabilities: { ...(prev.capabilities || {}), ...(n.capabilities || {}) },
+      last_seen: n.last_seen || prev.last_seen || null
+    };
+
+    map.set(n.node_id, merged);
+    updated++;
+  }
+
+  return { peers: Array.from(map.values()), added, updated };
+}
+
 async function postJson(httpClient, url, body) {
   const r = await httpClient(url, {
     method: 'POST',
@@ -156,12 +205,26 @@ export async function startNodeNetworkIntegrationV0_1({
     const p = await getJson(httpClient, `${base}/peers`).catch(() => null);
     if (p && p.ok && p.json?.ok === true && Array.isArray(p.json?.peers)) {
       bootstrapPeers = p.json.peers;
-      await writeJsonAtomic(peerCachePath, { ok: true, protocol: 'a2a/0.1', updated_at: nowIso(), peers: bootstrapPeers });
-      log('BOOTSTRAP_CACHE_UPDATED', { node_id, kind: 'peers', count: bootstrapPeers.length });
     }
   } catch {}
 
   const bootstrapOk = Array.isArray(bootstrapRelays) || Array.isArray(bootstrapPeers);
+
+  // Load existing peer cache (if any) and merge bootstrap peers into it.
+  let knownPeers = [];
+  {
+    const peerCache = await readJsonFileSafe(peerCachePath);
+    const cachedPeers = Array.isArray(peerCache?.peers) ? peerCache.peers : [];
+
+    const merged = mergePeersByNodeId({ existing: cachedPeers, incoming: Array.isArray(bootstrapPeers) ? bootstrapPeers : [], selfNodeId: node_id });
+    knownPeers = merged.peers;
+
+    // Persist merged peers if bootstrap provided peers, or if cache existed but had invalid shape.
+    if (Array.isArray(bootstrapPeers)) {
+      await writeJsonAtomic(peerCachePath, { ok: true, protocol: 'a2a/0.1', updated_at: nowIso(), peers: knownPeers });
+      log('BOOTSTRAP_CACHE_UPDATED', { node_id, kind: 'peers', count: knownPeers.length });
+    }
+  }
 
   // If bootstrap unavailable, use cache
   if (!bootstrapOk) {
@@ -175,12 +238,8 @@ export async function startNodeNetworkIntegrationV0_1({
       log('BOOTSTRAP_UNAVAILABLE_NO_CACHE', { node_id, kind: 'relays' });
     }
 
-    const peerCache = await readJsonFileSafe(peerCachePath);
-    const cachedPeers = Array.isArray(peerCache?.peers) ? peerCache.peers : null;
-    if (cachedPeers && cachedPeers.length) {
-      log('PEER_CACHE_LOADED', { node_id, count: cachedPeers.length });
-    } else {
-      // no-op; peers cache missing is fine
+    if (knownPeers && knownPeers.length) {
+      log('PEER_CACHE_LOADED', { node_id, count: knownPeers.length });
     }
   }
 
@@ -202,7 +261,9 @@ export async function startNodeNetworkIntegrationV0_1({
     relay_candidates: relayCandidates,
     relay_connected: false,
     relay_registered: false,
-    last_message_at: null
+    last_message_at: null,
+    known_peers: knownPeers,
+    peer_cache_path: peerCachePath
   };
 
   let activeWs = null;
@@ -223,6 +284,41 @@ export async function startNodeNetworkIntegrationV0_1({
     } catch (e) {
       return { ok: false, error: { code: 'SEND_FAILED', reason: String(e?.message || 'send_failed') } };
     }
+  };
+
+  // Peer gossip (supplemental discovery)
+  let gossipTimer = null;
+  const gossipEveryMs = Number(process.env.PEER_GOSSIP_EVERY_MS || 90_000);
+
+  const buildGossipPeers = () => {
+    const selfPeer = {
+      node_id,
+      relay_urls: state.relay_url ? [state.relay_url] : [],
+      capabilities: capabilities || {},
+      last_seen: nowIso()
+    };
+    const merged = mergePeersByNodeId({ existing: [selfPeer, ...(state.known_peers || [])], incoming: [], selfNodeId: null });
+    return merged.peers;
+  };
+
+  const sendPeerGossipOnce = (reason = 'periodic') => {
+    const peersPayload = buildGossipPeers();
+    const targets = (state.known_peers || []).map((p) => p?.node_id).filter((x) => x && x !== node_id);
+
+    for (const to of dedupPreserveOrder(targets)) {
+      const out = send({ to, topic: 'peer.gossip', payload: { peers: peersPayload } });
+      log('PEER_GOSSIP_SENT', { node_id, to, peer_count: peersPayload.length, reason, ok: out.ok });
+    }
+  };
+
+  const startGossipLoop = () => {
+    if (gossipTimer) return;
+    gossipTimer = setInterval(() => {
+      try {
+        if (state.relay_registered) sendPeerGossipOnce('periodic');
+      } catch {}
+    }, gossipEveryMs);
+    gossipTimer.unref();
   };
 
   const connectOnce = async ({ relayUrl, index, attempt }) => {
@@ -275,6 +371,13 @@ export async function startNodeNetworkIntegrationV0_1({
           state.relay_url = relayUrl;
           log('RELAY_REGISTER_OK', { node_id, relay_url: relayUrl });
 
+          // Ensure send() can work immediately after register
+          activeWs = ws;
+
+          // Start peer gossip after successful register
+          startGossipLoop();
+          try { sendPeerGossipOnce('after_register'); } catch {}
+
           // attach handlers for runtime receive loop
           ws.onmessage = (ev2) => {
             let m2 = null;
@@ -282,13 +385,31 @@ export async function startNodeNetworkIntegrationV0_1({
             state.last_message_at = nowIso();
 
             if (m2?.type === 'DELIVER') {
+              const topic = m2?.data?.topic ?? null;
+              const payload = m2?.data?.payload ?? null;
+
               log('RELAY_MESSAGE_RECEIVED', {
                 node_id,
                 from: m2?.from ?? null,
                 to: m2?.to ?? null,
                 message_id: m2?.message_id ?? null,
-                topic: m2?.data?.topic ?? null
+                topic
               });
+
+              // peer.gossip (supplemental discovery)
+              if (topic === 'peer.gossip') {
+                const peersIn = Array.isArray(payload?.peers) ? payload.peers : [];
+                log('PEER_GOSSIP_RECEIVED', { node_id, peer_count: peersIn.length });
+
+                const merged = mergePeersByNodeId({ existing: state.known_peers || [], incoming: peersIn, selfNodeId: node_id });
+                state.known_peers = merged.peers;
+
+                void writeJsonAtomic(state.peer_cache_path, { ok: true, protocol: 'a2a/0.1', updated_at: nowIso(), peers: state.known_peers }).catch(() => {});
+
+                log('PEER_CACHE_MERGED_FROM_GOSSIP', { node_id, peer_count: state.known_peers.length, added: merged.added, updated: merged.updated });
+                return;
+              }
+
               try {
                 if (typeof onDeliver === 'function') {
                   onDeliver({
@@ -296,8 +417,8 @@ export async function startNodeNetworkIntegrationV0_1({
                     from: m2?.from ?? null,
                     to: m2?.to ?? null,
                     message_id: m2?.message_id ?? null,
-                    topic: m2?.data?.topic ?? null,
-                    payload: m2?.data?.payload ?? null
+                    topic,
+                    payload
                   });
                 }
               } catch {}
@@ -384,6 +505,7 @@ export async function startNodeNetworkIntegrationV0_1({
     close: async () => {
       stopping = true;
       try { if (hbTimer) clearInterval(hbTimer); } catch {}
+      try { if (gossipTimer) clearInterval(gossipTimer); } catch {}
       try { if (activeWs) activeWs.close(); } catch {}
       activeWs = null;
     }
