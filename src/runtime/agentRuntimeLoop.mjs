@@ -141,6 +141,23 @@ export async function runLoop({
    const relay_url_override = String(process.env.RELAY_URL || '').trim() || null;
 
    const { startNodeNetworkIntegrationV0_1 } = await import('./network/nodeNetworkIntegrationV0_1.mjs');
+   const { handleTaskRelayMessageV0_1 } = await import('./network/taskMessageFlowV0_1.mjs');
+
+   let networkSend = null;
+   const onDeliver = (msg) => {
+    try {
+     handleTaskRelayMessageV0_1({
+      workspace_path: ws,
+      node_id,
+      capabilities: caps.capabilities || [],
+      from: msg?.from || null,
+      topic: msg?.topic || null,
+      payload: msg?.payload ?? null,
+      send: networkSend
+     }).catch(() => null);
+    } catch {}
+   };
+
    networkHandle = await startNodeNetworkIntegrationV0_1({
     node_id,
     version,
@@ -149,8 +166,14 @@ export async function runLoop({
     observed_addrs: [],
     bootstrap_base_url,
     relay_url_override,
+    onDeliver,
     heartbeatEveryMs: rand(30_000, 60_000)
    }).catch(() => null);
+
+   // bind send after registration attempt
+   if (networkHandle && typeof networkHandle.send === 'function') {
+    networkSend = networkHandle.send;
+   }
   }
  } catch {}
  
@@ -170,16 +193,34 @@ export async function runLoop({
  // Failure recovery: reclaim expired/orphaned tasks (every tick) 
  await recoverStuckTasks({ workspace_path: ws }).catch(() => null); 
 
+ // IMPLEMENT_TASK_MESSAGE_FLOW_V0_1: outbound network task messages (best-effort)
+ try {
+  if (daemon && networkHandle && typeof networkHandle.send === 'function') {
+   const node_id = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || h;
+   const bootstrap_base_url = String(process.env.BOOTSTRAP_BASE_URL || directory || '').trim();
+   const { loadNodeCapabilities } = await import('./nodeCapabilities.mjs');
+   const caps = await loadNodeCapabilities({ workspace_path: ws }).catch(() => ({ ok: true, capabilities: [] }));
+   const { tickTaskNetworkOutboundV0_1 } = await import('./network/taskMessageFlowV0_1.mjs');
+   await tickTaskNetworkOutboundV0_1({
+    workspace_path: ws,
+    node_id,
+    bootstrap_base_url,
+    send: networkHandle.send,
+    capabilities: caps.capabilities || []
+   }).catch(() => null);
+  }
+ } catch {}
+
  // NODE_AUTO_UPGRADE_PROTOCOL_V1: low-frequency stable-tag auto-upgrade (best-effort)
  try {
-  if (daemon) {
+  if (daemon && String(process.env.DISABLE_SELF_MAINTENANCE||'') !== '1') {
    await checkAndMaybeAutoUpgrade({ workspace_path: ws, holder: h, state, state_path, checkEveryHours: 6 }).catch(() => null);
   }
  } catch {}
 
  // AUTO_UPGRADE_PLUS_AUTO_RECOVERY_V1: low-frequency safe auto-recovery (best-effort)
  try {
-  if (daemon) {
+  if (daemon && String(process.env.DISABLE_SELF_MAINTENANCE||'') !== '1') {
    await runAutoRecoveryCheck({ workspace_path: ws, holder: h, state, state_path, checkEveryMinutes: 10 }).catch(() => null);
   }
  } catch {}
@@ -448,7 +489,15 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
  
  // C) pick task (capability-aware) 
  const caps = await loadNodeCapabilities({ workspace_path: ws }); 
- const matcher = (task) => taskMatchesCapabilities({ task, capabilities: caps.capabilities }); 
+ const matcher = (task) => {
+  // If this node is configured to publish tasks to peers, do not self-execute tasks it created.
+  // This preserves task semantics but avoids local self-activity for network-visible tasks.
+  const toCfg = String(process.env.TASK_PUBLISH_TO || '').trim();
+  if (toCfg && String(task?.created_by || '').trim() === h) {
+    return { ok: true, match: false, reason: 'originator_skip_for_network' };
+  }
+  return taskMatchesCapabilities({ task, capabilities: caps.capabilities });
+ }; 
  
  const picked = pickOldestPublished(loaded.table.tasks, matcher); 
  if (!picked) { 
@@ -486,18 +535,23 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
  return { idle: true, reason: 'TASK_ALREADY_CLAIMED' }; 
  } 
  
- // Announce claim to peers so they don't execute the same task. 
- try { 
- const afterAcc = await loadTasks({ tasks_path }); 
- const claimed = afterAcc.table.tasks.find((t) => t.task_id === picked.task_id) || null; 
- const lease = claimed?.lease || { holder: h, expires_at: null }; 
- const peersToAnnounce = Array.isArray(claim_announce_peers) ? claim_announce_peers : []; 
- for (const peer of peersToAnnounce) { 
- const to = String(peer || '').trim(); 
- if (!to || to === h) continue; 
- await sendTaskAccepted({ relayUrl, from_node_id: h, to_node_id: to, task_id: picked.task_id, lease }).catch(() => null); 
- } 
- } catch {} 
+ // IMPLEMENT_TASK_MESSAGE_FLOW_V0_1: emit task.claim to the creator when this node actually accepts the task.
+// (Do not emit claim earlier on task.publish receipt; that would fake behavior.)
+try {
+  const creator = String(picked.created_by || '').trim();
+  if (daemon && creator && creator !== h && networkHandle && typeof networkHandle.send === 'function') {
+    const afterAcc = await loadTasks({ tasks_path });
+    const claimed = afterAcc.table.tasks.find((t) => t.task_id === picked.task_id) || null;
+    const lease_until = claimed?.lease?.expires_at || null;
+    const payload = { task_id: picked.task_id, claimed_by: h, lease_until };
+    const tx = networkHandle.send({ to: creator, topic: 'task.claim', payload });
+    if (tx?.ok) {
+      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: creator }));
+    } else {
+      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: creator, warning: 'send_failed' }));
+    }
+  }
+} catch {} 
  
  // Re-check ownership before executing (claim protocol) 
  { 
@@ -533,21 +587,24 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
  } 
  } 
  
- // If this task originated from a remote creator, send result back (best-effort) 
- const creator = String(picked.created_by || '').trim(); 
- if (creator && creator !== h) { 
- const afterLocal = await loadTasks({ tasks_path }); 
- const finalLocal = afterLocal.table.tasks.find((t) => t.task_id === picked.task_id) || null; 
- await sendTaskResult({ 
- relayUrl, 
- from_peer_id: h, 
- to_peer_id: creator, 
- task_id: picked.task_id, 
- final_status: finalLocal?.status || null, 
- result: finalLocal?.result || null, 
- error: finalLocal?.error || null 
- }).catch(() => null); 
- } 
+ // IMPLEMENT_TASK_MESSAGE_FLOW_V0_1: if this task originated from a remote creator, send task.result back via relay.
+const creator = String(picked.created_by || '').trim();
+if (creator && creator !== h && daemon && networkHandle && typeof networkHandle.send === 'function') {
+  const afterLocal = await loadTasks({ tasks_path });
+  const finalLocal = afterLocal.table.tasks.find((t) => t.task_id === picked.task_id) || null;
+  const payload = {
+    task_id: picked.task_id,
+    executed_by: h,
+    status: finalLocal?.status || null,
+    result: finalLocal?.status === 'completed' ? (finalLocal?.result || null) : { ok: false, error: finalLocal?.error || { code: 'FAILED' } }
+  };
+  const tx = networkHandle.send({ to: creator, topic: 'task.result', payload });
+  if (tx?.ok) {
+    console.log(JSON.stringify({ ok: true, event: 'TASK_RESULT_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: creator }));
+  } else {
+    console.log(JSON.stringify({ ok: true, event: 'TASK_RESULT_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: creator, warning: 'send_failed' }));
+  }
+} 
  
  state.last_task_executed_at = nowIso(); 
  await saveRuntimeState({ state_path, state }); 

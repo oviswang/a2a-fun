@@ -47,6 +47,7 @@ export async function startNodeNetworkIntegrationV0_1({
   observed_addrs = [],
   bootstrap_base_url,
   relay_url_override = null,
+  onDeliver = null,
   heartbeatEveryMs = 45_000,
   httpTimeoutMs = 5_000
 } = {}) {
@@ -127,6 +128,23 @@ export async function startNodeNetworkIntegrationV0_1({
     last_message_at: null
   };
 
+  const send = ({ to, topic, payload, message_id = null } = {}) => {
+    if (!state.relay_registered) return { ok: false, error: { code: 'RELAY_NOT_REGISTERED' } };
+    const m = {
+      type: 'SEND',
+      from: node_id,
+      to,
+      message_id: message_id || undefined,
+      data: { topic, payload }
+    };
+    try {
+      ws.send(JSON.stringify(m));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: { code: 'SEND_FAILED', reason: String(e?.message || 'send_failed') } };
+    }
+  };
+
   const readyP = new Promise((resolve) => {
     let done = false;
     const finish = (v) => {
@@ -175,6 +193,21 @@ export async function startNodeNetworkIntegrationV0_1({
           message_id: msg?.message_id ?? null,
           topic: msg?.data?.topic ?? null
         });
+
+        // Caller hook for higher-level protocols (e.g., tasks).
+        try {
+          if (typeof onDeliver === 'function') {
+            onDeliver({
+              node_id,
+              from: msg?.from ?? null,
+              to: msg?.to ?? null,
+              message_id: msg?.message_id ?? null,
+              topic: msg?.data?.topic ?? null,
+              payload: msg?.data?.payload ?? null
+            });
+          }
+        } catch {}
+
         return;
       }
 
@@ -200,6 +233,7 @@ export async function startNodeNetworkIntegrationV0_1({
   return {
     ok: state.relay_connected && state.relay_registered,
     state,
+    send,
     close: async () => {
       try {
         if (hbTimer) clearInterval(hbTimer);

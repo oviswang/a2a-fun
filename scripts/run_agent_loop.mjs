@@ -19,6 +19,15 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv);
+
+// Config overrides (IMPLEMENT_NODE_NETWORK_INTEGRATION_V0_1)
+if (process.env.BOOTSTRAP_BASE_URL && String(process.env.BOOTSTRAP_BASE_URL).trim()) {
+  args.directory = String(process.env.BOOTSTRAP_BASE_URL).trim();
+}
+if (process.env.RELAY_URL && String(process.env.RELAY_URL).trim()) {
+  args.relayUrl = String(process.env.RELAY_URL).trim();
+}
+
 const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
 
 // SINGLE INSTANCE LOCK (data/daemon.lock)
