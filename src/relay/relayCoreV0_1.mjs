@@ -164,9 +164,12 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
       const conn_id = crypto.randomUUID();
       const remote = socket.remoteAddress || null;
       const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
-      socketMeta.set(socket, { conn_id, remote, ua });
+      const xff = typeof req.headers['x-forwarded-for'] === 'string' ? req.headers['x-forwarded-for'] : null;
+      const xri = typeof req.headers['x-real-ip'] === 'string' ? req.headers['x-real-ip'] : null;
+      const cf = typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : null;
+      socketMeta.set(socket, { conn_id, remote, ua, xff, xri, cf });
 
-      log('RELAY_CONNECTION_OPEN', { node_id: null, conn_id, remote, ua });
+      log('RELAY_CONNECTION_OPEN', { node_id: null, conn_id, remote, xff, xri, cf, ua });
 
       let buf = Buffer.alloc(0);
       let closed = false;
@@ -188,9 +191,27 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
           const cur = conns.get(node_id);
           // only delete if it is the same active socket
           if (cur && cur.socket === socket) conns.delete(node_id);
-          log('RELAY_NODE_DISCONNECTED', { node_id, conn_id: meta.conn_id || null, remote: meta.remote || null, ua: meta.ua || null, reason });
+          log('RELAY_NODE_DISCONNECTED', {
+            node_id,
+            conn_id: meta.conn_id || null,
+            remote: meta.remote || null,
+            xff: meta.xff || null,
+            xri: meta.xri || null,
+            cf: meta.cf || null,
+            ua: meta.ua || null,
+            reason
+          });
         } else {
-          log('RELAY_NODE_DISCONNECTED', { node_id: null, conn_id: meta.conn_id || null, remote: meta.remote || null, ua: meta.ua || null, reason });
+          log('RELAY_NODE_DISCONNECTED', {
+            node_id: null,
+            conn_id: meta.conn_id || null,
+            remote: meta.remote || null,
+            xff: meta.xff || null,
+            xri: meta.xri || null,
+            cf: meta.cf || null,
+            ua: meta.ua || null,
+            reason
+          });
         }
         socketMeta.delete(socket);
         closeSocket(socket);
@@ -241,9 +262,15 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
                 node_id,
                 old_conn_id: prev.conn_id || null,
                 old_remote: prev.remote || null,
+                old_xff: prev.xff || null,
+                old_xri: prev.xri || null,
+                old_cf: prev.cf || null,
                 old_ua: prev.ua || null,
                 new_conn_id: metaNew.conn_id || null,
                 new_remote: metaNew.remote || null,
+                new_xff: metaNew.xff || null,
+                new_xri: metaNew.xri || null,
+                new_cf: metaNew.cf || null,
                 new_ua: metaNew.ua || null
               });
               try {
@@ -257,11 +284,28 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
               } catch {}
             }
 
-            conns.set(node_id, { socket, lastSeenMs: Date.now(), conn_id: metaNew.conn_id || null, remote: metaNew.remote || null, ua: metaNew.ua || null });
+            conns.set(node_id, {
+              socket,
+              lastSeenMs: Date.now(),
+              conn_id: metaNew.conn_id || null,
+              remote: metaNew.remote || null,
+              xff: metaNew.xff || null,
+              xri: metaNew.xri || null,
+              cf: metaNew.cf || null,
+              ua: metaNew.ua || null
+            });
             socketToNode.set(socket, node_id);
 
             writeWsText(socket, { type: 'REGISTER_ACK', to: node_id, accepted: true });
-            log('RELAY_REGISTER_OK', { node_id, conn_id: metaNew.conn_id || null, remote: metaNew.remote || null, ua: metaNew.ua || null });
+            log('RELAY_REGISTER_OK', {
+              node_id,
+              conn_id: metaNew.conn_id || null,
+              remote: metaNew.remote || null,
+              xff: metaNew.xff || null,
+              xri: metaNew.xri || null,
+              cf: metaNew.cf || null,
+              ua: metaNew.ua || null
+            });
             continue;
           }
 
