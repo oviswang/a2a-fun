@@ -15,6 +15,7 @@ import { sendTaskAccepted } from '../tasks/taskClaimTransport.mjs';
 import { sendPeerGossip } from '../peers/peerGossipTransport.mjs'; 
 import { recordTaskExecuted } from '../peers/peerStats.mjs'; 
 import { fetchAndValidateNetworkStats } from './joinNetworkSignalStats.mjs'; 
+import { checkAndMaybeAutoUpgrade } from './autoUpgrade.mjs'; 
  
 function nowIso() { 
  return new Date().toISOString(); 
@@ -59,7 +60,12 @@ export async function loadRuntimeState({ state_path } = {}) {
  last_radar_generation_at: null, 
  last_radar_delivery_at: null, 
  first_radar_sent: false, 
- first_join_announced: false 
+ first_join_announced: false, 
+ last_upgrade_check_at: null, 
+ last_upgrade_attempt_at: null, 
+ last_upgrade_success_at: null, 
+ last_upgrade_target: null, 
+ last_upgrade_error: null 
  } 
  }; 
  } 
@@ -130,6 +136,13 @@ const rand = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
  
  // Failure recovery: reclaim expired/orphaned tasks (every tick) 
  await recoverStuckTasks({ workspace_path: ws }).catch(() => null); 
+
+ // NODE_AUTO_UPGRADE_PROTOCOL_V1: low-frequency stable-tag auto-upgrade (best-effort)
+ try {
+  if (daemon) {
+   await checkAndMaybeAutoUpgrade({ workspace_path: ws, holder: h, state, state_path, checkEveryHours: 6 }).catch(() => null);
+  }
+ } catch {}
  
  // JOIN_NETWORK_SIGNAL_V1: announce first successful join (best-effort) 
  try { 
