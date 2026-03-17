@@ -1,4 +1,6 @@
 import { createFetchHttpClient } from '../bootstrap/bootstrapClient.mjs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 function nowIso() {
   return new Date().toISOString();
@@ -34,6 +36,27 @@ function dedupPreserveOrder(list) {
     out.push(s);
   }
   return out;
+}
+
+function workspacePath() {
+  return String(process.env.A2A_WORKSPACE_PATH || process.cwd());
+}
+
+async function readJsonFileSafe(p) {
+  try {
+    const s = await fs.readFile(p, 'utf-8');
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+async function writeJsonAtomic(p, obj) {
+  const dir = path.dirname(p);
+  await fs.mkdir(dir, { recursive: true });
+  const tmp = `${p}.tmp.${process.pid}.${Date.now()}`;
+  await fs.writeFile(tmp, JSON.stringify(obj, null, 2), 'utf-8');
+  await fs.rename(tmp, p);
 }
 
 async function postJson(httpClient, url, body) {
@@ -107,16 +130,59 @@ export async function startNodeNetworkIntegrationV0_1({
   hbTimer = setInterval(heartbeat, heartbeatEveryMs);
   hbTimer.unref();
 
-  // 3) build relay candidate list
+  // 3) bootstrap discovery (relays + peers) with degraded-mode cache
+  const ws = workspacePath();
+  const relayCachePath = path.join(ws, 'data', 'relay-cache.json');
+  const peerCachePath = path.join(ws, 'data', 'peer-cache.json');
+
   const candidates = [];
   if (relay_url_override) candidates.push(String(relay_url_override).trim());
 
+  let bootstrapRelays = null;
+  let bootstrapPeers = null;
+
+  // Try bootstrap first (preferred)
   try {
     const r = await getJson(httpClient, `${base}/relays`).catch(() => null);
     if (r && r.ok && r.json?.ok === true && Array.isArray(r.json?.relays)) {
-      for (const u of r.json.relays) candidates.push(u);
+      bootstrapRelays = r.json.relays;
+      for (const u of bootstrapRelays) candidates.push(u);
+      await writeJsonAtomic(relayCachePath, { ok: true, protocol: 'a2a/0.1', updated_at: nowIso(), relays: dedupPreserveOrder(bootstrapRelays) });
+      log('BOOTSTRAP_CACHE_UPDATED', { node_id, kind: 'relays', count: dedupPreserveOrder(bootstrapRelays).length });
     }
   } catch {}
+
+  try {
+    const p = await getJson(httpClient, `${base}/peers`).catch(() => null);
+    if (p && p.ok && p.json?.ok === true && Array.isArray(p.json?.peers)) {
+      bootstrapPeers = p.json.peers;
+      await writeJsonAtomic(peerCachePath, { ok: true, protocol: 'a2a/0.1', updated_at: nowIso(), peers: bootstrapPeers });
+      log('BOOTSTRAP_CACHE_UPDATED', { node_id, kind: 'peers', count: bootstrapPeers.length });
+    }
+  } catch {}
+
+  const bootstrapOk = Array.isArray(bootstrapRelays) || Array.isArray(bootstrapPeers);
+
+  // If bootstrap unavailable, use cache
+  if (!bootstrapOk) {
+    const relayCache = await readJsonFileSafe(relayCachePath);
+    const cachedRelays = Array.isArray(relayCache?.relays) ? relayCache.relays : null;
+    if (cachedRelays && cachedRelays.length) {
+      log('BOOTSTRAP_UNAVAILABLE_USING_CACHE', { node_id, kind: 'relays', count: cachedRelays.length });
+      log('RELAY_CACHE_LOADED', { node_id, relay_urls: cachedRelays });
+      for (const u of cachedRelays) candidates.push(u);
+    } else {
+      log('BOOTSTRAP_UNAVAILABLE_NO_CACHE', { node_id, kind: 'relays' });
+    }
+
+    const peerCache = await readJsonFileSafe(peerCachePath);
+    const cachedPeers = Array.isArray(peerCache?.peers) ? peerCache.peers : null;
+    if (cachedPeers && cachedPeers.length) {
+      log('PEER_CACHE_LOADED', { node_id, count: cachedPeers.length });
+    } else {
+      // no-op; peers cache missing is fine
+    }
+  }
 
   // include any relay_urls passed in publish-self (lowest priority)
   if (Array.isArray(relay_urls)) {
