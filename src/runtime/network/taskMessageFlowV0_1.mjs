@@ -225,6 +225,29 @@ export async function handleTaskRelayMessageV0_1({
         tasks.push(t);
         loaded.table.tasks = tasks;
         await saveTasks({ tasks_path, table: loaded.table });
+      } else {
+        // Minimal recovery: coerce into a valid task shape so arbitration/execution can proceed.
+        log('TASK_PUBLISH_PERSIST_FAILED', { node_id, task_id, from, error: v.error || null });
+        try {
+          t.type = (t.type && typeof t.type === 'string') ? t.type : 'run_check';
+          if (!t.topic) t.topic = String(p.topic || '').trim() || 'untitled';
+          t.created_at = nowIso();
+          t.created_by = String(p.created_by || from || '').trim() || from;
+          t.status = 'published';
+          t.input = t.input && typeof t.input === 'object' ? t.input : {};
+          t.lease = t.lease && typeof t.lease === 'object' ? t.lease : { holder: null, expires_at: null };
+          const v2 = validateTask(t);
+          if (v2.ok) {
+            tasks.push(t);
+            loaded.table.tasks = tasks;
+            await saveTasks({ tasks_path, table: loaded.table });
+            log('TASK_PUBLISH_PERSIST_RECOVERED', { node_id, task_id, from });
+          } else {
+            log('TASK_CLAIM_WINDOW_SUPPRESSED', { node_id, task_id, reason: 'PERSIST_INVALID_TASK' });
+          }
+        } catch {
+          log('TASK_CLAIM_WINDOW_SUPPRESSED', { node_id, task_id, reason: 'PERSIST_EXCEPTION' });
+        }
       }
     }
 
