@@ -248,6 +248,14 @@ export async function startNodeNetworkIntegrationV0_1({
     for (const u of relay_urls) candidates.push(u);
   }
 
+  // Minimal safety fallback: if bootstrap+cache provided no relays, use an explicit fallback.
+  if (candidates.length === 0) {
+    const raw = String(process.env.RELAY_FALLBACK_URLS || 'wss://gw.bothook.me/relay');
+    const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    for (const u of parts) candidates.push(u);
+    log('RELAY_CANDIDATES_FALLBACK_USED', { node_id, relay_urls: parts });
+  }
+
   const relayCandidates = dedupPreserveOrder(candidates);
   log('RELAY_CANDIDATES_READY', { node_id, relay_urls: relayCandidates });
 
