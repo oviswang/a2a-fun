@@ -8,5 +8,8 @@
     "test": "node --test test/*.test.mjs",
     "lint": "node -c src/**/*.mjs",
     "bootstrap": "node src/bootstrap/server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
   }
 }

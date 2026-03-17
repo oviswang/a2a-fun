@@ -261,15 +261,14 @@ export async function startNodeNetworkIntegrationV0_1({
 
   const allowLocalRelay = String(process.env.ALLOW_LOCAL_RELAY || '') === '1';
 
-  // WebSocket implementation (Node.js may not expose global WebSocket).
-  let WebSocketCtor = globalThis.WebSocket;
-  if (!WebSocketCtor) {
-    try {
-      const u = await import('undici');
-      WebSocketCtor = u.WebSocket;
-    } catch {
-      WebSocketCtor = null;
-    }
+  // WebSocket implementation
+  // Prefer `ws` package for consistency across Node runtimes.
+  let WebSocketCtor = null;
+  try {
+    const w = await import('ws');
+    WebSocketCtor = w.WebSocket;
+  } catch {
+    WebSocketCtor = globalThis.WebSocket || null;
   }
   if (!WebSocketCtor) {
     log('RELAY_WEBSOCKET_UNAVAILABLE', { node_id });
