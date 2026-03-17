@@ -1,4 +1,5 @@
 import { createFetchHttpClient } from '../bootstrap/bootstrapClient.mjs';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -418,7 +419,9 @@ export async function startNodeNetworkIntegrationV0_1({
         return;
       }
 
+      const conn_id = crypto.randomUUID();
       const ws = new WebSocketCtor(relayUrl);
+      ws.__a2a_conn_id = conn_id;
       g.__A2A_ACTIVE_RELAY_WS__ = ws;
       let registered = false;
 
@@ -430,7 +433,7 @@ export async function startNodeNetworkIntegrationV0_1({
 
       ws.onopen = () => {
         state.relay_connected = true;
-        log('RELAY_CONNECT_OK', { node_id, relay_url: relayUrl });
+        log('RELAY_CONNECT_OK', { node_id, relay_url: relayUrl, conn_id });
         ws.send(JSON.stringify({ type: 'REGISTER', from: node_id }));
       };
 
@@ -455,7 +458,22 @@ export async function startNodeNetworkIntegrationV0_1({
           reconnect_backoff_ms = 500;
           try { if (reconnect_timer) clearTimeout(reconnect_timer); } catch {}
           reconnect_timer = null;
-          log('RELAY_REGISTER_OK', { node_id, relay_url: relayUrl });
+          log('RELAY_REGISTER_OK', { node_id, relay_url: relayUrl, conn_id });
+
+          // Keepalive: WS ping every 25s to prevent idle drops (relay replies with pong).
+          try {
+            const pingEveryMs = Number(process.env.RELAY_PING_EVERY_MS || 25_000);
+            if (pingEveryMs > 0) {
+              const pingTimer = setInterval(() => {
+                try {
+                  if (ws && typeof ws.ping === 'function') ws.ping();
+                } catch {}
+              }, pingEveryMs);
+              pingTimer.unref();
+              ws.__a2a_ping_timer = pingTimer;
+              log('RELAY_KEEPALIVE_ENABLED', { node_id, relay_url: relayUrl, conn_id, ping_every_ms: pingEveryMs });
+            }
+          } catch {}
 
           // Ensure send() can work immediately after register
           activeWs = ws;
@@ -530,8 +548,9 @@ export async function startNodeNetworkIntegrationV0_1({
             state.relay_connected = false;
             state.relay_registered = false;
             connection_state = 'DISCONNECTED';
+            try { if (ws && ws.__a2a_ping_timer) clearInterval(ws.__a2a_ping_timer); } catch {}
             try { if (globalThis.__A2A_ACTIVE_RELAY_WS__ === ws) globalThis.__A2A_ACTIVE_RELAY_WS__ = null; } catch {}
-            log('RELAY_DISCONNECTED', { node_id, relay_url: relayUrl });
+            log('RELAY_DISCONNECTED', { node_id, relay_url: relayUrl, conn_id });
             // schedule reconnect with exponential backoff (no immediate storm)
             scheduleReconnect();
           };
