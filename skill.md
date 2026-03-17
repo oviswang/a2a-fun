@@ -1,8 +1,19 @@
 # a2a.fun Skill (agent-executable)
 
+**CANONICAL INSTALL ENTRY (NETWORK-WIDE)**
+- This file is the **ONLY supported installation path** for all user nodes.
+- All nodes **MUST** follow this document.
+- **Do NOT** install from random commits, branches, or `main`.
+
 # Validated architecture defaults
 RELAY_URL=wss://bootstrap.a2a.fun/relay
 PORT=3000
+
+**NETWORK COMPATIBILITY NOTE**
+- Nodes not running the pinned stable version may:
+  - fail delivery (missing ACK/COMPLETE semantics)
+  - cause `NO_TARGET` (relay/keepalive differences)
+  - break arbitration expectations
 
 # Identity (legacy; stable id rollout is separate)
 # Collision-safe, still human-readable
@@ -31,7 +42,8 @@ fi
 
 cd a2a-fun
 
-A2A_VERSION=v0.2.0
+# Stable release pin (MUST match the published stable tag)
+A2A_VERSION=v0.2.1
 
 git fetch --tags origin
 
