@@ -323,9 +323,13 @@ export async function handleTaskRelayMessageV0_1({
         d.pending_peers = Array.isArray(d.pending_peers) ? d.pending_peers : [];
 
         // If targets were unknown at init time, expand targets as we see ACKs (best-effort).
+        // Also: if we observe ACKs from additional peers not in targets (e.g. due to init race),
+        // treat them as intended targets so DELIVERY_COMPLETE can reflect reality.
         if (!d.targets.length) {
           d.targets = [received_by];
           d.pending_peers = [received_by];
+        } else if (!d.targets.includes(received_by)) {
+          d.targets.push(received_by);
         }
 
         if (!d.acked_peers.includes(received_by)) d.acked_peers.push(received_by);
