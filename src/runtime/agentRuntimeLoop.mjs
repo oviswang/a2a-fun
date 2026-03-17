@@ -125,7 +125,35 @@ export async function runLoop({
  
  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const rand = (a, b) => Math.floor(a + Math.random() * (b - a + 1)); 
+ const rand = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
+
+ // IMPLEMENT_NODE_NETWORK_INTEGRATION_V0_1 (best-effort; must not break agent loop)
+ let networkHandle = null;
+ try {
+  if (daemon) {
+   const node_id = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || h;
+   const version = String(process.env.A2A_VERSION || '').trim() || null;
+
+   const { loadNodeCapabilities } = await import('./nodeCapabilities.mjs');
+   const caps = await loadNodeCapabilities({ workspace_path: ws }).catch(() => ({ ok: true, capabilities: [] }));
+
+   const bootstrap_base_url = String(process.env.BOOTSTRAP_BASE_URL || directory || '').trim();
+   const relay_url_override = String(process.env.RELAY_URL || '').trim() || null;
+
+   const { startNodeNetworkIntegrationV0_1 } = await import('./network/nodeNetworkIntegrationV0_1.mjs');
+   networkHandle = await startNodeNetworkIntegrationV0_1({
+    node_id,
+    version,
+    capabilities: { requires: caps.capabilities || [] },
+    relay_urls: relay_url_override ? [relay_url_override] : [],
+    observed_addrs: [],
+    bootstrap_base_url,
+    relay_url_override,
+    heartbeatEveryMs: rand(30_000, 60_000)
+   }).catch(() => null);
+  }
+ } catch {}
+ 
  
  const due24h = (iso) => { 
  if (!iso) return true; 
@@ -176,7 +204,8 @@ const rand = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
  return map[c] || ''; 
  }; 
  
- const fetched = await fetchAndValidateNetworkStats({ url: 'https://bootstrap.a2a.fun/network_stats' }).catch(() => null); 
+ const base = String(process.env.BOOTSTRAP_BASE_URL || directory || 'https://bootstrap.a2a.fun').replace(/\/$/, '');
+ const fetched = await fetchAndValidateNetworkStats({ url: `${base}/network_stats` }).catch(() => null); 
  const statsAvailable = fetched && fetched.ok === true && fetched.available === true; 
  const stats = statsAvailable ? fetched.stats : null; 
  
