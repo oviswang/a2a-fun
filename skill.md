@@ -6,7 +6,7 @@
 - **Do NOT** install from random commits, branches, or `main`.
 
 # Validated architecture defaults
-RELAY_URL=wss://bootstrap.a2a.fun/relay
+RELAY_URL=wss://gw.bothook.me/relay
 PORT=3000
 
 **NETWORK COMPATIBILITY NOTE**
@@ -14,6 +14,19 @@ PORT=3000
   - fail delivery (missing ACK/COMPLETE semantics)
   - cause `NO_TARGET` (relay/keepalive differences)
   - break arbitration expectations
+
+**STABLE GUARANTEE (v0.2.1)**
+Guaranteed:
+- explicit target delivery only (targets come only from `TASK_PUBLISH_TO`)
+- no peer-cache target pollution
+- ACK-based delivery completion (`TASK_PUBLISH_DELIVERY_COMPLETE`)
+- stable relay registration + keepalive (relay-ready logs)
+- at least one worker executes and returns a result
+
+Not guaranteed:
+- multi-winner execution prevention in all cases
+- global scheduling fairness
+- economic incentives
 
 # Identity (legacy; stable id rollout is separate)
 # Collision-safe, still human-readable
@@ -77,7 +90,7 @@ set -e
 cd a2a-fun
 
 export PORT=3000
-export RELAY_URL=wss://bootstrap.a2a.fun/relay
+export RELAY_URL=wss://gw.bothook.me/relay
 export ENABLE_RELAY_INBOUND=true
 export A2A_WORKSPACE_PATH=$(pwd)
 
@@ -121,7 +134,7 @@ fi
 echo "$start_mode" > .start_mode
 
 if [ "$start_mode" = "fresh" ]; then
-  PORT=$PORT node scripts/start-node.mjs > node.log 2>&1 &
+  node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID" > node.daemon.log 2>&1 &
   echo $! > node.pid
 fi
 
@@ -131,13 +144,23 @@ tail -n 10 node.log || true
 
 verify:
 
-mode=$(cat .start_mode 2>/dev/null || echo fresh)
-if [ "$mode" = "reuse" ]; then
-  curl -fsS --max-time 3 "http://127.0.0.1:$PORT/status" | grep '"ok":true'
-else
-  test -s node.pid
-  kill -0 $(cat node.pid)
-fi
+# Strong relay readiness (REQUIRED)
+# Do NOT consider install/start successful without relay readiness.
+# Required:
+# - RELAY_CONNECT_OK
+# - RELAY_REGISTER_OK
+# - RELAY_KEEPALIVE_ENABLED
+# And at least one of:
+# - node receives task.publish
+# - node sends task.publish.ack
+# - creator sees TASK_RESULT_RECEIVED
+
+test -s node.pid
+kill -0 $(cat node.pid)
+
+grep -m1 'RELAY_CONNECT_OK' node.daemon.log
+grep -m1 'RELAY_REGISTER_OK' node.daemon.log
+grep -m1 'RELAY_KEEPALIVE_ENABLED' node.daemon.log
 
 next:
 STEP wait_node
@@ -321,7 +344,7 @@ set -e
 cd a2a-fun
 
 export A2A_WORKSPACE_PATH=$(pwd)
-export RELAY_URL=wss://bootstrap.a2a.fun/relay
+export RELAY_URL=wss://gw.bothook.me/relay
 
 # Stable node identity (persisted)
 mkdir -p "$A2A_WORKSPACE_PATH/data"
@@ -333,14 +356,19 @@ else
 fi
 export A2A_AGENT_ID=$NODE_ID
 
+# CRITICAL: relay identity depends on NODE_ID stability.
+# - Never regenerate NODE_ID if data/node_id exists.
+# - --holder MUST equal $NODE_ID (mismatch will break relay identity).
+
 # Optional: Radar delivery via OpenClaw (best-effort, once per 24h)
 # export RADAR_DELIVERY_CHANNEL=whatsapp
 # export RADAR_DELIVERY_TARGET="+<your_number>"
 
-# INSTALL_MODE_COMPAT_V0_1
-mode=user
-if command -v systemctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-  mode=systemd
+# SYSTEMD is the recommended default.
+# User mode is fallback only (no auto-restart after reboot).
+mode=systemd
+if ! (command -v systemctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1); then
+  mode=user
 fi
 
 echo "branch_taken=$mode"
@@ -350,7 +378,7 @@ if [ "$mode" = "systemd" ]; then
   if [ ! -f .env.runtime ]; then
     cat > .env.runtime <<'ENV'
 # a2a-fun runtime env (systemd)
-RELAY_URL=wss://bootstrap.a2a.fun/relay
+RELAY_URL=wss://gw.bothook.me/relay
 # RADAR_DELIVERY_CHANNEL=whatsapp
 # RADAR_DELIVERY_TARGET=+6598931276
 OPENCLAW_BIN=/home/ubuntu/.npm-global/bin/openclaw
@@ -370,7 +398,7 @@ WorkingDirectory=$A2A_WORKSPACE_PATH
 EnvironmentFile=-$A2A_WORKSPACE_PATH/.env.runtime
 ExecStart=/bin/bash -lc 'set -euo pipefail; NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id"); export A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH"; export NODE_ID="$NODE_ID"; export A2A_AGENT_ID="$NODE_ID"; /usr/bin/env node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID"'
 Restart=always
-RestartSec=3
+RestartSec=2
 NoNewPrivileges=true
 
 [Install]
