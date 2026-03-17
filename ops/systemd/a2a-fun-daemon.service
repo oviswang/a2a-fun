@@ -23,7 +23,7 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=%h/a2a-fun
+WorkingDirectory=/home/ubuntu/a2a-fun
 
 # Auto-restart supervisor layer
 Restart=always
@@ -36,7 +36,7 @@ ExecStartPre=/bin/bash -lc 'pkill -f "node scripts/run_agent_loop.mjs --d""aemon
 Environment=PORT=3000
 Environment=RELAY_URL=wss://bootstrap.a2a.fun/relay
 Environment=ENABLE_RELAY_INBOUND=true
-Environment=A2A_WORKSPACE_PATH=%h/a2a-fun
+Environment=A2A_WORKSPACE_PATH=/home/ubuntu/a2a-fun
 
 # Holder/node identity:
 # - prefer persisted data/node_id
