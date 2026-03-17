@@ -261,6 +261,20 @@ export async function startNodeNetworkIntegrationV0_1({
 
   const allowLocalRelay = String(process.env.ALLOW_LOCAL_RELAY || '') === '1';
 
+  // WebSocket implementation (Node.js may not expose global WebSocket).
+  let WebSocketCtor = globalThis.WebSocket;
+  if (!WebSocketCtor) {
+    try {
+      const u = await import('undici');
+      WebSocketCtor = u.WebSocket;
+    } catch {
+      WebSocketCtor = null;
+    }
+  }
+  if (!WebSocketCtor) {
+    log('RELAY_WEBSOCKET_UNAVAILABLE', { node_id });
+  }
+
   const state = {
     ok: true,
     node_id,
@@ -383,7 +397,13 @@ export async function startNodeNetworkIntegrationV0_1({
         return;
       }
 
-      const ws = new WebSocket(relayUrl);
+      if (!WebSocketCtor) {
+        connection_state = 'DISCONNECTED';
+        finish({ ok: false, error: { code: 'NO_WEBSOCKET' } });
+        return;
+      }
+
+      const ws = new WebSocketCtor(relayUrl);
       g.__A2A_ACTIVE_RELAY_WS__ = ws;
       let registered = false;
 
