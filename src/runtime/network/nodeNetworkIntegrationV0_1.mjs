@@ -23,6 +23,19 @@ function isLocalOnlyUrl(url) {
   }
 }
 
+function dedupPreserveOrder(list) {
+  const out = [];
+  const seen = new Set();
+  for (const it of list) {
+    const s = String(it || '').trim();
+    if (!s) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
 async function postJson(httpClient, url, body) {
   const r = await httpClient(url, {
     method: 'POST',
@@ -75,7 +88,7 @@ export async function startNodeNetworkIntegrationV0_1({
     }
   }
 
-  // 2) heartbeat loop (best-effort; do not crash runtime)
+  // 2) heartbeat loop (best-effort)
   let hbTimer = null;
   const heartbeat = async () => {
     const out = await postJson(httpClient, `${base}/heartbeat`, { node_id, ts: nowIso() }).catch((e) => ({
@@ -87,7 +100,6 @@ export async function startNodeNetworkIntegrationV0_1({
     if (out.ok && out.json?.ok === true) {
       log('BOOTSTRAP_HEARTBEAT_OK', { node_id });
     } else {
-      // still emit required event, but mark as warning
       log('BOOTSTRAP_HEARTBEAT_OK', { node_id, warning: 'heartbeat_failed', status: out.status, error: out.json?.error || null });
     }
   };
@@ -95,41 +107,43 @@ export async function startNodeNetworkIntegrationV0_1({
   hbTimer = setInterval(heartbeat, heartbeatEveryMs);
   hbTimer.unref();
 
-  // 3) fetch relay list
-  let relayUrl = relay_url_override ? String(relay_url_override).trim() : '';
-  if (!relayUrl) {
+  // 3) build relay candidate list
+  const candidates = [];
+  if (relay_url_override) candidates.push(String(relay_url_override).trim());
+
+  try {
     const r = await getJson(httpClient, `${base}/relays`).catch(() => null);
-    if (r && r.ok && r.json?.ok === true && Array.isArray(r.json?.relays) && r.json.relays.length > 0) {
-      relayUrl = String(r.json.relays[0] || '').trim();
+    if (r && r.ok && r.json?.ok === true && Array.isArray(r.json?.relays)) {
+      for (const u of r.json.relays) candidates.push(u);
     }
+  } catch {}
+
+  // include any relay_urls passed in publish-self (lowest priority)
+  if (Array.isArray(relay_urls)) {
+    for (const u of relay_urls) candidates.push(u);
   }
 
-  // 4) connect to relay (must not connect to localhost unless explicitly configured)
+  const relayCandidates = dedupPreserveOrder(candidates);
+  log('RELAY_CANDIDATES_READY', { node_id, relay_urls: relayCandidates });
+
   const allowLocalRelay = String(process.env.ALLOW_LOCAL_RELAY || '') === '1';
-  if (!relayUrl) {
-    log('RELAY_CONNECT_OK', { node_id, accepted: false, error: 'NO_RELAY_URL' });
-    return { ok: false, error: { code: 'NO_RELAY_URL' } };
-  }
-
-  if (!allowLocalRelay && isLocalOnlyUrl(relayUrl)) {
-    log('RELAY_CONNECT_OK', { node_id, accepted: false, error: 'LOCAL_RELAY_DISALLOWED', relay_url: relayUrl });
-    return { ok: false, error: { code: 'LOCAL_RELAY_DISALLOWED' } };
-  }
-
-  const ws = new WebSocket(relayUrl);
 
   const state = {
     ok: true,
     node_id,
     bootstrap_base_url: base,
-    relay_url: relayUrl,
+    relay_url: null,
+    relay_candidates: relayCandidates,
     relay_connected: false,
     relay_registered: false,
     last_message_at: null
   };
 
+  let activeWs = null;
+  let stopping = false;
+
   const send = ({ to, topic, payload, message_id = null } = {}) => {
-    if (!state.relay_registered) return { ok: false, error: { code: 'RELAY_NOT_REGISTERED' } };
+    if (!state.relay_registered || !activeWs) return { ok: false, error: { code: 'RELAY_NOT_REGISTERED' } };
     const m = {
       type: 'SEND',
       from: node_id,
@@ -138,109 +152,174 @@ export async function startNodeNetworkIntegrationV0_1({
       data: { topic, payload }
     };
     try {
-      ws.send(JSON.stringify(m));
+      activeWs.send(JSON.stringify(m));
       return { ok: true };
     } catch (e) {
       return { ok: false, error: { code: 'SEND_FAILED', reason: String(e?.message || 'send_failed') } };
     }
   };
 
-  const readyP = new Promise((resolve) => {
-    let done = false;
-    const finish = (v) => {
-      if (done) return;
-      done = true;
-      resolve(v);
-    };
+  const connectOnce = async ({ relayUrl, index, attempt }) => {
+    if (!relayUrl) return { ok: false, error: { code: 'NO_RELAY_URL' } };
+    if (!allowLocalRelay && isLocalOnlyUrl(relayUrl)) {
+      log('RELAY_CONNECT_ATTEMPT', { node_id, relay_url: relayUrl, index, attempt, skipped: true, reason: 'LOCAL_RELAY_DISALLOWED' });
+      return { ok: false, error: { code: 'LOCAL_RELAY_DISALLOWED' } };
+    }
 
-    ws.onopen = () => {
-      state.relay_connected = true;
-      log('RELAY_CONNECT_OK', { node_id, relay_url: relayUrl });
-      // 5) register
-      ws.send(JSON.stringify({ type: 'REGISTER', from: node_id }));
-    };
+    log('RELAY_CONNECT_ATTEMPT', { node_id, relay_url: relayUrl, index, attempt });
 
-    ws.onerror = () => {
-      if (!state.relay_connected) {
-        log('RELAY_CONNECT_OK', { node_id, accepted: false, relay_url: relayUrl, error: 'WS_ERROR' });
-      }
-      finish(false);
-    };
+    return await new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        resolve(v);
+      };
 
-    ws.onmessage = (ev) => {
-      let msg = null;
-      try {
-        msg = JSON.parse(String(ev.data));
-      } catch {
-        return;
-      }
+      const ws = new WebSocket(relayUrl);
+      let registered = false;
 
-      state.last_message_at = nowIso();
+      const timeout = setTimeout(() => {
+        try { ws.close(); } catch {}
+        finish({ ok: false, error: { code: 'REGISTER_TIMEOUT' } });
+      }, 8000);
+      timeout.unref();
 
-      if (msg?.type === 'REGISTER_ACK' && msg?.to === node_id && msg?.accepted === true) {
-        state.relay_registered = true;
-        log('RELAY_REGISTER_OK', { node_id, relay_url: relayUrl });
-        finish(true);
-        return;
-      }
+      ws.onopen = () => {
+        state.relay_connected = true;
+        log('RELAY_CONNECT_OK', { node_id, relay_url: relayUrl });
+        ws.send(JSON.stringify({ type: 'REGISTER', from: node_id }));
+      };
 
-      // Any delivered message must be observable.
-      if (msg?.type === 'DELIVER') {
-        log('RELAY_MESSAGE_RECEIVED', {
-          node_id,
-          from: msg?.from ?? null,
-          to: msg?.to ?? null,
-          message_id: msg?.message_id ?? null,
-          topic: msg?.data?.topic ?? null
-        });
+      ws.onerror = () => {
+        clearTimeout(timeout);
+        try { ws.close(); } catch {}
+        finish({ ok: false, error: { code: 'WS_ERROR' } });
+      };
 
-        // Caller hook for higher-level protocols (e.g., tasks).
-        try {
-          if (typeof onDeliver === 'function') {
-            onDeliver({
-              node_id,
-              from: msg?.from ?? null,
-              to: msg?.to ?? null,
-              message_id: msg?.message_id ?? null,
-              topic: msg?.data?.topic ?? null,
-              payload: msg?.data?.payload ?? null
-            });
+      ws.onmessage = (ev) => {
+        let msg = null;
+        try { msg = JSON.parse(String(ev.data)); } catch { return; }
+        state.last_message_at = nowIso();
+
+        if (msg?.type === 'REGISTER_ACK' && msg?.to === node_id && msg?.accepted === true) {
+          clearTimeout(timeout);
+          registered = true;
+          state.relay_registered = true;
+          state.relay_url = relayUrl;
+          log('RELAY_REGISTER_OK', { node_id, relay_url: relayUrl });
+
+          // attach handlers for runtime receive loop
+          ws.onmessage = (ev2) => {
+            let m2 = null;
+            try { m2 = JSON.parse(String(ev2.data)); } catch { return; }
+            state.last_message_at = nowIso();
+
+            if (m2?.type === 'DELIVER') {
+              log('RELAY_MESSAGE_RECEIVED', {
+                node_id,
+                from: m2?.from ?? null,
+                to: m2?.to ?? null,
+                message_id: m2?.message_id ?? null,
+                topic: m2?.data?.topic ?? null
+              });
+              try {
+                if (typeof onDeliver === 'function') {
+                  onDeliver({
+                    node_id,
+                    from: m2?.from ?? null,
+                    to: m2?.to ?? null,
+                    message_id: m2?.message_id ?? null,
+                    topic: m2?.data?.topic ?? null,
+                    payload: m2?.data?.payload ?? null
+                  });
+                }
+              } catch {}
+              return;
+            }
+
+            if (m2?.type === 'ERROR') {
+              log('RELAY_MESSAGE_RECEIVED', { node_id, error: m2?.error ?? null, message_id: m2?.message_id ?? null });
+            }
+          };
+
+          ws.onclose = () => {
+            if (stopping) return;
+            state.relay_connected = false;
+            state.relay_registered = false;
+            log('RELAY_DISCONNECTED', { node_id, relay_url: relayUrl });
+            // trigger background reconnection
+            void ensureConnected();
+          };
+
+          finish({ ok: true, ws });
+          return;
+        }
+      };
+
+      ws.onclose = () => {
+        if (registered) return;
+        clearTimeout(timeout);
+        finish({ ok: false, error: { code: 'CLOSED_BEFORE_REGISTER' } });
+      };
+    });
+  };
+
+  let reconnecting = false;
+
+  const ensureConnected = async () => {
+    if (reconnecting) return;
+    reconnecting = true;
+
+    try {
+      // Try current relay a few times first, then failover.
+      const maxAttemptsPerRelay = Number(process.env.RELAY_RECONNECT_ATTEMPTS || 3);
+
+      const startIndex = state.relay_url ? Math.max(0, relayCandidates.indexOf(state.relay_url)) : 0;
+      const ordered = relayCandidates.length ? relayCandidates : [];
+
+      for (let offset = 0; offset < ordered.length; offset++) {
+        const idx = (startIndex + offset) % ordered.length;
+        const relayUrl = ordered[idx];
+
+        if (offset > 0) {
+          log('RELAY_FAILOVER_NEXT', { node_id, relay_url: relayUrl, index: idx });
+        }
+
+        for (let attempt = 1; attempt <= maxAttemptsPerRelay; attempt++) {
+          if (stopping) return;
+
+          const out = await connectOnce({ relayUrl, index: idx, attempt });
+          if (out.ok && out.ws) {
+            // replace active ws
+            try { if (activeWs && activeWs !== out.ws) activeWs.close(); } catch {}
+            activeWs = out.ws;
+            return;
           }
-        } catch {}
 
-        return;
+          // brief deterministic backoff
+          await new Promise((r) => setTimeout(r, 300 * attempt));
+        }
       }
 
-      // Also log errors as received messages (helps observability).
-      if (msg?.type === 'ERROR') {
-        log('RELAY_MESSAGE_RECEIVED', { node_id, error: msg?.error ?? null, message_id: msg?.message_id ?? null });
-        return;
-      }
-    };
+      log('RELAY_ALL_CANDIDATES_FAILED', { node_id, relay_urls: relayCandidates });
+    } finally {
+      reconnecting = false;
+    }
+  };
 
-    ws.onclose = () => {
-      state.relay_connected = false;
-      finish(false);
-    };
-
-    // registration should complete quickly
-    setTimeout(() => finish(false), 8000).unref();
-  });
-
-  // Wait until either REGISTER_ACK arrives or timeout.
-  await readyP;
+  // initial connection attempt (non-fatal)
+  await ensureConnected();
 
   return {
-    ok: state.relay_connected && state.relay_registered,
+    ok: !!(state.relay_connected && state.relay_registered),
     state,
     send,
     close: async () => {
-      try {
-        if (hbTimer) clearInterval(hbTimer);
-      } catch {}
-      try {
-        ws.close();
-      } catch {}
+      stopping = true;
+      try { if (hbTimer) clearInterval(hbTimer); } catch {}
+      try { if (activeWs) activeWs.close(); } catch {}
+      activeWs = null;
     }
   };
 }
