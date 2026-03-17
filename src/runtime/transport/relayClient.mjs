@@ -36,13 +36,23 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, r
     ? (typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : `sess:${crypto.randomUUID()}`)
     : null;
 
-  let ws = null;
+  // NOTE: relay connections are process-global singleton (v0.1). This client is a thin wrapper.
   let connected = false;
+  let unsubscribe = null;
 
   async function connect() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-
-    ws = new WebSocket(relayUrl);
+    const { initRelaySingleton } = await import('../network/relaySingleton.mjs');
+    const relay = initRelaySingleton({ node_id: nodeId, relayCandidates: [relayUrl], allowLocalRelay: true });
+    if (!unsubscribe) {
+      unsubscribe = relay.subscribe('*', ({ from, payload }) => {
+        // Forwarded messages are opaque: { from, payload }
+        try { onForward({ from, payload }); } catch {}
+      });
+    }
+    await relay.ensureConnected();
+    connected = true;
+    return;
+  }
 
     // Attach message handler BEFORE registration send (avoid missing 'registered').
     let didRegister = false;
@@ -140,30 +150,24 @@ export function createRelayClient({ relayUrl, nodeId, onForward, onDisconnect, r
       throw e;
     }
     await connect();
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    const { initRelaySingleton } = await import('../network/relaySingleton.mjs');
+    const relay = initRelaySingleton({ node_id: nodeId, relayCandidates: [relayUrl], allowLocalRelay: true });
+    const out = await relay.send({ to, topic: 'relay.forward', payload, message_id: null });
+    if (!out.ok) {
       const e = new Error('relayClient.relay: not connected');
       e.code = 'NOT_CONNECTED';
       throw e;
     }
-    ws.send(JSON.stringify({ type: 'relay', to, payload }));
   }
 
   async function close() {
-    if (!ws) return;
-    await new Promise((resolve) => {
-      try {
-        ws.addEventListener('close', resolve, { once: true });
-        ws.close();
-      } catch {
-        resolve();
-      }
-    });
-    ws = null;
+    try { if (typeof unsubscribe === 'function') unsubscribe(); } catch {}
+    unsubscribe = null;
     connected = false;
   }
 
   function isConnected() {
-    return connected && ws && ws.readyState === WebSocket.OPEN;
+    return !!connected;
   }
 
   return { connect, relay, close, isConnected };
