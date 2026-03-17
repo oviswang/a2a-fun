@@ -268,10 +268,16 @@ export async function checkAndMaybeAutoUpgrade({
     const livePluginDir = path.join(os.homedir(), '.openclaw', 'extensions', 'a2a-send');
     await copyDirRecursive(repoPluginDir, livePluginDir);
 
-    // Restart gateway (best-effort, detached)
-    // NOTE: On some hosts, a foreground gateway restart may propagate signals to the caller.
-    // We detach to keep the upgrade flow recoverable.
-    await execFileAsync('bash', ['-lc', 'nohup openclaw gateway restart >/dev/null 2>&1 &'], { cwd: ws }).catch(() => null);
+    // Restart gateway only if needed (best-effort, detached)
+    // Rationale: be conservative; many nodes don't need a restart for file-sync only.
+    try {
+      const plugins0 = await loadPluginsJson();
+      const a2aLoaded0 =
+        !!plugins0 && Array.isArray(plugins0.plugins) && plugins0.plugins.some((p) => p && p.id === 'a2a-send' && p.enabled === true && p.status === 'loaded');
+      if (!a2aLoaded0) {
+        await execFileAsync('bash', ['-lc', 'nohup openclaw gateway restart >/dev/null 2>&1 &'], { cwd: ws }).catch(() => null);
+      }
+    } catch {}
 
     // Restart daemon (best-effort): start a fresh daemon, then exit current process.
     // We do not delete data/ and we do not stop other daemons aggressively.
