@@ -150,6 +150,7 @@ export async function runLoop({
       workspace_path: ws,
       node_id,
       capabilities: caps.capabilities || [],
+      known_peers: networkHandle?.state?.known_peers || [],
       from: msg?.from || null,
       topic: msg?.topic || null,
       payload: msg?.payload ?? null,
@@ -206,7 +207,8 @@ export async function runLoop({
     node_id,
     bootstrap_base_url,
     send: networkHandle.send,
-    capabilities: caps.capabilities || []
+    capabilities: caps.capabilities || [],
+    known_peers: networkHandle?.state?.known_peers || []
    }).catch(() => null);
   }
  } catch {}
@@ -493,7 +495,9 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
   // If this node is configured to publish tasks to peers, do not self-execute tasks it created.
   // This preserves task semantics but avoids local self-activity for network-visible tasks.
   const toCfg = String(process.env.TASK_PUBLISH_TO || '').trim();
-  if (toCfg && String(task?.created_by || '').trim() === h) {
+  const createdBySelf = String(task?.created_by || '').trim() === h;
+  const broadcasted = task?.meta && typeof task.meta === 'object' && task.meta.task_publish_sent === true;
+  if (createdBySelf && (toCfg || broadcasted)) {
     return { ok: true, match: false, reason: 'originator_skip_for_network' };
   }
   return taskMatchesCapabilities({ task, capabilities: caps.capabilities });
@@ -526,39 +530,66 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
  console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_TASK_PICKED', mode, holder: h, task_id: picked.task_id })); 
  
  // D) accept + execute 
+ console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_ATTEMPT', ts: nowIso(), node_id: h, task_id: picked.task_id }));
  const acc = await acceptTask({ tasks_path, task_id: picked.task_id, holder: h }); 
  if (!acc.ok) {
+  // Another node may have claimed it first; treat as benign contention.
+  let holder = null;
+  try {
+    const cur = await loadTasks({ tasks_path });
+    const curTask = cur.table.tasks.find((t) => t.task_id === picked.task_id) || null;
+    holder = String(curTask?.assigned_to || curTask?.lease?.holder || '').trim() || null;
+  } catch {}
 
-// Another node may have claimed it first; treat as benign contention. 
- console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_IDLE', mode, holder: h, reason: 'TASK_ALREADY_CLAIMED', task_id: picked.task_id, error: acc.error })); 
- await saveRuntimeState({ state_path, state }); 
- return { idle: true, reason: 'TASK_ALREADY_CLAIMED' }; 
- } 
+  console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_LOST', ts: nowIso(), node_id: h, task_id: picked.task_id, claimed_by: holder }));
+  console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_IDLE', mode, holder: h, reason: 'TASK_ALREADY_CLAIMED', task_id: picked.task_id, error: acc.error }));
+  await saveRuntimeState({ state_path, state });
+  return { idle: true, reason: 'TASK_ALREADY_CLAIMED' };
+ }
+
+ console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_WON', ts: nowIso(), node_id: h, task_id: picked.task_id, claimed_by: h }));
  
  // IMPLEMENT_TASK_MESSAGE_FLOW_V0_1: emit task.claim to the creator when this node actually accepts the task.
 // (Do not emit claim earlier on task.publish receipt; that would fake behavior.)
 try {
   const creator = String(picked.created_by || '').trim();
-  if (daemon && creator && creator !== h && networkHandle && typeof networkHandle.send === 'function') {
+  if (daemon && networkHandle && typeof networkHandle.send === 'function') {
     const afterAcc = await loadTasks({ tasks_path });
     const claimed = afterAcc.table.tasks.find((t) => t.task_id === picked.task_id) || null;
     const lease_until = claimed?.lease?.expires_at || null;
     const payload = { task_id: picked.task_id, claimed_by: h, lease_until };
-    const tx = networkHandle.send({ to: creator, topic: 'task.claim', payload });
-    if (tx?.ok) {
-      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: creator }));
-    } else {
-      console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to: creator, warning: 'send_failed' }));
+
+    const targets = [];
+    if (creator && creator !== h) targets.push(creator);
+
+    // Broadcast claim to all known peers (arbitration signal)
+    const kp = networkHandle?.state?.known_peers;
+    if (Array.isArray(kp)) {
+      for (const p of kp) {
+        const tid = String(p?.node_id || '').trim();
+        if (!tid || tid === h) continue;
+        targets.push(tid);
+      }
+    }
+
+    const uniq = Array.from(new Set(targets));
+    for (const to of uniq.slice(0, 50)) {
+      const tx = networkHandle.send({ to, topic: 'task.claim', payload });
+      if (tx?.ok) {
+        console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to }));
+      } else {
+        console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SENT', ts: nowIso(), node_id: h, task_id: picked.task_id, to, warning: 'send_failed' }));
+      }
     }
   }
-} catch {} 
+} catch {}
  
  // Re-check ownership before executing (claim protocol) 
  { 
  const cur = await loadTasks({ tasks_path }); 
  const curTask = cur.table.tasks.find((t) => t.task_id === picked.task_id) || null; 
  if (curTask && String(curTask.assigned_to || '').trim() && String(curTask.assigned_to || '').trim() !== h) { 
- console.log(JSON.stringify({ ok: true, event: 'TASK_EXECUTION_SKIPPED_NOT_CLAIM_OWNER', task_id: picked.task_id, assigned_to: curTask.assigned_to })); 
+ console.log(JSON.stringify({ ok: true, event: 'TASK_EXECUTION_SKIPPED_LOST_CLAIM', ts: nowIso(), node_id: h, task_id: picked.task_id, claimed_by: curTask.assigned_to }));
  await saveRuntimeState({ state_path, state }); 
  return { idle: true, reason: 'NOT_CLAIM_OWNER' }; 
  } 

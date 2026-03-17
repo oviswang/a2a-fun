@@ -17,7 +17,8 @@ export async function tickTaskNetworkOutboundV0_1({
   node_id,
   bootstrap_base_url,
   send,
-  capabilities = []
+  capabilities = [],
+  known_peers = []
 } = {}) {
   if (!send || typeof send !== 'function') return { ok: true, skipped: true, reason: 'no_send' };
 
@@ -25,12 +26,19 @@ export async function tickTaskNetworkOutboundV0_1({
   const loaded = await loadTasks({ tasks_path });
   const tasks = loaded.table.tasks || [];
 
-  // Determine target(s)
+  // Determine publish targets
+  // Priority:
+  // 1) explicit TASK_PUBLISH_TO (backward compat)
+  // 2) broadcast to known_peers (peer cache / gossip)
+  // 3) fallback: choose one active peer from bootstrap
   const configuredTo = String(process.env.TASK_PUBLISH_TO || '').trim();
   let toList = configuredTo ? configuredTo.split(',').map((s) => s.trim()).filter(Boolean) : [];
 
+  if (!toList.length && Array.isArray(known_peers) && known_peers.length) {
+    toList = known_peers.map((p) => p?.node_id).filter((x) => x && x !== node_id);
+  }
+
   if (!toList.length && bootstrap_base_url) {
-    // best-effort: choose one active peer from bootstrap
     try {
       const r = await fetch(`${String(bootstrap_base_url).replace(/\/$/, '')}/peers`, { method: 'GET' });
       const j = await r.json();
@@ -38,6 +46,8 @@ export async function tickTaskNetworkOutboundV0_1({
       if (peer?.node_id) toList = [peer.node_id];
     } catch {}
   }
+
+  toList = Array.from(new Set(toList));
 
   // 1) task.publish outbound: tasks created by this node that are still published.
   for (const t of tasks) {
@@ -51,7 +61,12 @@ export async function tickTaskNetworkOutboundV0_1({
 
     if (!toList.length) continue;
 
-    for (const to of toList.slice(0, 3)) {
+    const targets = toList.slice(0, 50);
+    log('TASK_PUBLISH_BROADCAST', { node_id, task_id: t.task_id, peer_count: targets.length });
+
+    let sentOk = 0;
+
+    for (const to of targets) {
       const payload = {
         task_id: t.task_id,
         type: t.type,
@@ -62,14 +77,18 @@ export async function tickTaskNetworkOutboundV0_1({
 
       const tx = send({ to, topic: 'task.publish', payload });
       if (tx?.ok) {
+        sentOk++;
         log('TASK_PUBLISH_SENT', { node_id, task_id: t.task_id, to });
       } else {
         log('TASK_PUBLISH_SENT', { node_id, task_id: t.task_id, to, warning: 'send_failed' });
       }
     }
 
-    t.meta.task_publish_sent = true;
-    await saveTasks({ tasks_path, table: loaded.table });
+    // Only mark as sent if at least one target accepted the send.
+    if (sentOk > 0) {
+      t.meta.task_publish_sent = true;
+      await saveTasks({ tasks_path, table: loaded.table });
+    }
   }
 
   // 2) task.result outbound: tasks executed by this node where created_by is remote.
@@ -158,6 +177,9 @@ export async function handleTaskRelayMessageV0_1({
     const match = taskMatchesCapabilities({ task: t, capabilities });
     if (!match?.match) return { ok: true, eligible: false, reason: 'ineligible' };
 
+    // Arbitration visibility: eligible nodes record that they will compete.
+    log('TASK_CLAIM_ATTEMPT', { node_id, task_id, claimed_by: node_id });
+
     return { ok: true, eligible: true };
   }
 
@@ -169,14 +191,24 @@ export async function handleTaskRelayMessageV0_1({
     const loaded = await loadTasks({ tasks_path });
     const t = loaded.table.tasks.find((x) => x && x.task_id === task_id) || null;
     if (t) {
+      const prevStatus = String(t.status || '').trim() || null;
+      const prevAssigned = String(t.assigned_to || '').trim() || null;
+      const nextAssigned = String(p.claimed_by || from || '').trim() || null;
+
       t.status = 'accepted';
-      t.assigned_to = String(p.claimed_by || from || '').trim() || null;
+      t.assigned_to = nextAssigned;
       t.lease = t.lease && typeof t.lease === 'object' ? t.lease : { holder: null, expires_at: null };
       t.lease.holder = t.assigned_to;
       t.lease.expires_at = p.lease_until || t.lease.expires_at || null;
       t.meta = t.meta && typeof t.meta === 'object' ? t.meta : {};
       t.meta.claim_received_from = from;
       await saveTasks({ tasks_path, table: loaded.table });
+
+      if (prevAssigned === node_id && nextAssigned && nextAssigned !== node_id) {
+        log('TASK_CLAIM_LOST', { node_id, task_id, claimed_by: nextAssigned });
+      } else if (prevStatus === 'published' && nextAssigned && nextAssigned !== node_id) {
+        log('TASK_EXECUTION_SKIPPED_LOST_CLAIM', { node_id, task_id, claimed_by: nextAssigned });
+      }
     }
     return { ok: true };
   }
@@ -184,17 +216,27 @@ export async function handleTaskRelayMessageV0_1({
   if (topic === 'task.result') {
     const p = payload && typeof payload === 'object' ? payload : {};
     const task_id = String(p.task_id || '').trim();
-    log('TASK_RESULT_RECEIVED', { node_id, task_id, from });
 
     const loaded = await loadTasks({ tasks_path });
     const t = loaded.table.tasks.find((x) => x && x.task_id === task_id) || null;
     if (t) {
+      t.meta = t.meta && typeof t.meta === 'object' ? t.meta : {};
+      if (t.meta.task_result_received === true) {
+        return { ok: true, duplicate: true };
+      }
+
+      log('TASK_RESULT_RECEIVED', { node_id, task_id, from });
+
       t.status = p.status || t.status;
       t.result = p.result ?? t.result;
-      t.meta = t.meta && typeof t.meta === 'object' ? t.meta : {};
       t.meta.result_received_from = from;
+      t.meta.task_result_received = true;
       await saveTasks({ tasks_path, table: loaded.table });
+      return { ok: true };
     }
+
+    // If we don't have the task locally, still log once.
+    log('TASK_RESULT_RECEIVED', { node_id, task_id, from, warning: 'task_not_found' });
     return { ok: true };
   }
 
