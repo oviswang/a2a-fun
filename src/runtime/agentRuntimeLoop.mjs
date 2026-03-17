@@ -90,8 +90,9 @@ function leaseActive(task) {
 } 
  
 function pickOldestPublished(tasks, matcher) { 
+ // Recovery policy (Option B): prefer newest published tasks to avoid starvation by stale published items.
  const pub = tasks.filter((t) => t && t.status === 'published' && !leaseActive(t)); 
- pub.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || ''))); 
+ pub.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))); 
  if (typeof matcher !== 'function') return pub[0] || null; 
  for (const t of pub) { 
  const m = matcher(t); 
@@ -529,6 +530,7 @@ const peerDue = !state.last_peer_refresh_at || (Date.now() - Date.parse(state.la
  state.last_task_pick_at = nowIso(); 
  console.log(JSON.stringify({ ok: true, event: 'TASK_CLAIM_SELECTED', mode, holder: h, task_id: picked.task_id })); 
  console.log(JSON.stringify({ ok: true, event: 'AGENT_LOOP_TASK_PICKED', mode, holder: h, task_id: picked.task_id })); 
+ console.log(JSON.stringify({ ok: true, event: 'TASK_PICKED', mode, holder: h, task_id: picked.task_id })); 
  
  // D) execution gate for remote-published broadcast tasks: claim window must finish before accept/execute
  {
