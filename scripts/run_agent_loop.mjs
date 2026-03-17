@@ -21,6 +21,49 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv);
 const workspace_path = process.env.A2A_WORKSPACE_PATH || process.cwd();
 
+// SINGLE INSTANCE LOCK (data/daemon.lock)
+// - If lock exists and PID is alive for a daemon run_agent_loop, exit safely.
+// - If stale, replace.
+if (args.daemon) {
+  try {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+
+    const lockPath = path.join(workspace_path, 'data', 'daemon.lock');
+    await fs.mkdir(path.dirname(lockPath), { recursive: true });
+
+    const raw = await fs.readFile(lockPath, 'utf8').catch(() => null);
+    const lock = raw ? JSON.parse(String(raw)) : null;
+    const lockedPid = Number(lock?.pid || 0);
+
+    const isPidAlive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (lockedPid && Number.isFinite(lockedPid) && isPidAlive(lockedPid)) {
+      // Best-effort: only treat as held when the pid looks like a daemon run_agent_loop.
+      const cmdline = await fs.readFile(`/proc/${lockedPid}/cmdline`, 'utf8').catch(() => '');
+      const ok = String(cmdline || '').includes('scripts/run_agent_loop.mjs') && String(cmdline || '').includes('--daemon');
+      if (ok) {
+        console.log(JSON.stringify({ ok: true, event: 'DAEMON_LOCK_HELD_BY_OTHER', pid: lockedPid }));
+        process.exit(0);
+      }
+    }
+
+    if (raw) {
+      console.log(JSON.stringify({ ok: true, event: 'DAEMON_LOCK_STALE_REPLACED', prev_pid: lockedPid || null }));
+    }
+
+    await fs.writeFile(lockPath, JSON.stringify({ ok: true, pid: process.pid, at: new Date().toISOString() }, null, 2) + '\n', 'utf8');
+    console.log(JSON.stringify({ ok: true, event: 'DAEMON_LOCK_ACQUIRED', pid: process.pid }));
+  } catch {}
+}
+
 // v0.1 stable node identity: persist NODE_ID under workspace data/node_id
 try {
   const fs = await import('node:fs/promises');

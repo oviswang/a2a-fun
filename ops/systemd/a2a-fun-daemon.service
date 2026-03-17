@@ -21,11 +21,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=ubuntu
+Group=ubuntu
 WorkingDirectory=%h/a2a-fun
 
 # Auto-restart supervisor layer
 Restart=always
 RestartSec=3
+
+# Exclusivity: kill any existing user-mode/nohup daemons before starting (avoid self-match by string split)
+ExecStartPre=/bin/bash -lc 'pkill -f "node scripts/run_agent_loop.mjs --d""aemon" || true'
 
 # Optional env overrides
 Environment=PORT=3000
@@ -36,20 +41,7 @@ Environment=A2A_WORKSPACE_PATH=%h/a2a-fun
 # Holder/node identity:
 # - prefer persisted data/node_id
 # - otherwise create once
-ExecStart=/bin/bash -lc '
-set -euo pipefail
-cd "$A2A_WORKSPACE_PATH"
-mkdir -p data
-if [ -f data/node_id ]; then
-  HOLDER=$(cat data/node_id)
-else
-  HOLDER="$(hostname)-$(openssl rand -hex 2)"
-  echo "$HOLDER" > data/node_id
-fi
-export NODE_ID="$HOLDER"
-export A2A_AGENT_ID="$HOLDER"
-exec node scripts/run_agent_loop.mjs --daemon --holder "$HOLDER"
-'
+ExecStart=/bin/bash -lc 'set -euo pipefail; cd "$A2A_WORKSPACE_PATH"; mkdir -p data; if [ -f data/node_id ]; then HOLDER=$(cat data/node_id); else HOLDER="$(hostname)-$(openssl rand -hex 2)"; echo "$HOLDER" > data/node_id; fi; export NODE_ID="$HOLDER"; export A2A_AGENT_ID="$HOLDER"; exec node scripts/run_agent_loop.mjs --daemon --holder "$HOLDER"'
 
 # Hardening (minimal)
 KillSignal=SIGTERM

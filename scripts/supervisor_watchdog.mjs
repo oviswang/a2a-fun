@@ -44,6 +44,15 @@ async function readOrCreateHolder({ workspace_path } = {}) {
   return h;
 }
 
+async function systemdActive() {
+  try {
+    const { stdout } = await execFileAsync('bash', ['-lc', 'systemctl is-active a2a-fun-daemon >/dev/null 2>&1 && echo yes || echo no']);
+    return String(stdout || '').trim() === 'yes';
+  } catch {
+    return false;
+  }
+}
+
 async function daemonCount() {
   const { stdout } = await execFileAsync('bash', [
     '-lc',
@@ -81,7 +90,19 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv);
 
 const loop = async () => {
+  // PART 1: systemd exclusivity — if systemd supervisor is active, watchdog must not run.
+  if (await systemdActive()) {
+    console.log(JSON.stringify({ ok: true, event: 'SUPERVISOR_SKIPPED_SYSTEMD_ACTIVE' }));
+    process.exit(0);
+  }
+
   while (true) {
+    // Re-check in case systemd becomes active later.
+    if (await systemdActive()) {
+      console.log(JSON.stringify({ ok: true, event: 'SUPERVISOR_SKIPPED_SYSTEMD_ACTIVE' }));
+      process.exit(0);
+    }
+
     console.log(JSON.stringify({ ok: true, event: 'SUPERVISOR_CHECK', ts: nowIso() }));
     try {
       const n = await daemonCount();
