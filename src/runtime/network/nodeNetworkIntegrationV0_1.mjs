@@ -373,6 +373,20 @@ export async function startNodeNetworkIntegrationV0_1({
   let gossipTimer = null;
   const gossipEveryMs = Number(process.env.PEER_GOSSIP_EVERY_MS || 90_000);
 
+  // Presence gossip (P2P-native liveness; bootstrap is compatibility only)
+  // - Relay keepalive: proves connection liveness.
+  // - Presence gossip: propagates liveness node-to-node.
+  // - Bootstrap visibility: optional directory, not the source of truth.
+  const presenceGossipEveryMs = Number(process.env.PRESENCE_GOSSIP_EVERY_MS || 30_000);
+  const presenceActiveWindowMs = Number(process.env.PRESENCE_ACTIVE_WINDOW_MS || 120_000);
+  const presenceCachePath = path.join(workspacePath(), 'data', 'presence-cache.json');
+  let presenceGossipTimer = null;
+  let presenceCache = { ok: true, protocol: 'a2a/0.1', updated_at: null, peers: {} };
+  try {
+    const loaded = await readJsonFileSafe(presenceCachePath);
+    if (loaded && typeof loaded === 'object' && loaded.peers && typeof loaded.peers === 'object') presenceCache = loaded;
+  } catch {}
+
   const buildGossipPeers = () => {
     const selfPeer = {
       node_id,
@@ -402,6 +416,86 @@ export async function startNodeNetworkIntegrationV0_1({
       } catch {}
     }, gossipEveryMs);
     gossipTimer.unref();
+  };
+
+  const buildPresencePayload = () => {
+    const p = {
+      node_id,
+      ts: nowIso(),
+      relay_urls: state.relay_url ? [state.relay_url] : (Array.isArray(relay_urls) ? relay_urls : []),
+      capabilities: capabilities || {}
+    };
+    const ver = String(version || '').trim();
+    if (ver) p.version = ver;
+    const cc = String(process.env.COUNTRY_CODE || '').trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(cc)) p.country_code = cc;
+    return p;
+  };
+
+  const mergePresenceIntoCache = async ({ peer_id, payload }) => {
+    if (!peer_id || peer_id === node_id) return;
+
+    const ts = String(payload?.ts || '').trim();
+    const tsMs = Date.parse(ts);
+    const seenIso = Number.isFinite(tsMs) ? new Date(tsMs).toISOString() : nowIso();
+
+    const relayUrls = Array.isArray(payload?.relay_urls) ? payload.relay_urls.filter((u) => typeof u === 'string' && u.trim()).slice(0, 6) : [];
+    const caps = payload?.capabilities && typeof payload.capabilities === 'object' ? payload.capabilities : {};
+
+    const prev = presenceCache.peers?.[peer_id] && typeof presenceCache.peers[peer_id] === 'object' ? presenceCache.peers[peer_id] : {};
+
+    const next = {
+      peer_id,
+      last_presence_ts: seenIso,
+      relay_urls: relayUrls.length ? relayUrls : (Array.isArray(prev.relay_urls) ? prev.relay_urls : []),
+      capabilities: Object.keys(caps).length ? caps : (prev.capabilities || {}),
+      country_code: payload?.country_code || prev.country_code || null,
+      version: payload?.version || prev.version || null
+    };
+
+    presenceCache.peers = presenceCache.peers && typeof presenceCache.peers === 'object' ? presenceCache.peers : {};
+    presenceCache.peers[peer_id] = next;
+    presenceCache.updated_at = nowIso();
+
+    const ageMs = Date.now() - (Date.parse(seenIso) || Date.now());
+    const freshness = ageMs <= presenceActiveWindowMs ? 'ACTIVE' : 'STALE';
+
+    log('PEER_PRESENCE_UPDATED', { node_id, peer_id, ts: seenIso, freshness, age_ms: ageMs });
+
+    void writeJsonAtomic(presenceCachePath, presenceCache).catch(() => {});
+  };
+
+  const sendPresenceGossipOnce = (reason = 'periodic') => {
+    const payload = buildPresencePayload();
+    const targets = (state.known_peers || []).map((p) => p?.node_id).filter((x) => x && x !== node_id);
+    const dedup = dedupPreserveOrder(targets);
+
+    let okCount = 0;
+    for (const to of dedup) {
+      const out = send({ to, topic: 'peer.presence', payload });
+      if (out.ok) okCount++;
+    }
+
+    log('PEER_PRESENCE_GOSSIP_SENT', { node_id, peer_count: dedup.length, ok_count: okCount, reason, ts: payload.ts });
+  };
+
+  const startPresenceLoop = () => {
+    if (presenceGossipTimer) return;
+    if (!Number.isFinite(presenceGossipEveryMs) || presenceGossipEveryMs <= 0) return;
+
+    presenceGossipTimer = setInterval(() => {
+      try {
+        if (state.relay_registered) sendPresenceGossipOnce('periodic');
+      } catch {}
+    }, presenceGossipEveryMs);
+    presenceGossipTimer.unref();
+
+    // small startup kick (best-effort)
+    setTimeout(() => {
+      try {
+        if (state.relay_registered) sendPresenceGossipOnce('startup');
+      } catch {}
+    }, 1000).unref?.();
   };
 
   // Connection guard (single active connection per node_id)
@@ -527,6 +621,9 @@ export async function startNodeNetworkIntegrationV0_1({
           startGossipLoop();
           try { sendPeerGossipOnce('after_register'); } catch {}
 
+          // Start peer presence gossip (P2P liveness propagation)
+          startPresenceLoop();
+
           // attach handlers for runtime receive loop
           ws.onmessage = (ev2) => {
             let m2 = null;
@@ -556,6 +653,14 @@ export async function startNodeNetworkIntegrationV0_1({
                 void writeJsonAtomic(state.peer_cache_path, { ok: true, protocol: 'a2a/0.1', updated_at: nowIso(), peers: state.known_peers }).catch(() => {});
 
                 log('PEER_CACHE_MERGED_FROM_GOSSIP', { node_id, peer_count: state.known_peers.length, added: merged.added, updated: merged.updated });
+                return;
+              }
+
+              // peer.presence (P2P-native liveness)
+              if (topic === 'peer.presence') {
+                const peer_id = String(payload?.node_id || m2?.from || '').trim();
+                log('PEER_PRESENCE_GOSSIP_RECEIVED', { node_id, peer_id: peer_id || null, ts: payload?.ts || null });
+                void mergePresenceIntoCache({ peer_id, payload });
                 return;
               }
 
@@ -672,6 +777,7 @@ export async function startNodeNetworkIntegrationV0_1({
       stopping = true;
       try { if (hbTimer) clearInterval(hbTimer); } catch {}
       try { if (presenceTimer) clearInterval(presenceTimer); } catch {}
+      try { if (presenceGossipTimer) clearInterval(presenceGossipTimer); } catch {}
       try { if (gossipTimer) clearInterval(gossipTimer); } catch {}
       try { if (reconnect_timer) clearTimeout(reconnect_timer); } catch {}
       reconnect_timer = null;
