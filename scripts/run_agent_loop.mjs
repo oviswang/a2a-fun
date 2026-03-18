@@ -73,29 +73,99 @@ if (args.daemon) {
   } catch {}
 }
 
-// v0.1 stable node identity: persist NODE_ID under workspace data/node_id
+// Bootstrap identity (IMPLEMENT_A2A_IDENTITY_BOOTSTRAP_V0_1)
+// Phase 1: node_seed + machine fingerprint -> derived node_id.
+// NOTE: Future phase will bind node_id -> agent_id (NOT implemented here).
 try {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
+  const os = await import('node:os');
+  const crypto = await import('node:crypto');
 
-  const p = path.join(workspace_path, 'data', 'node_id');
-  await fs.mkdir(path.dirname(p), { recursive: true });
+  const dataDir = path.join(workspace_path, 'data');
+  await fs.mkdir(dataDir, { recursive: true });
 
-  const existing = await fs.readFile(p, 'utf8').catch(() => null);
-  const stable = existing && String(existing).trim() ? String(existing).trim() : null;
+  const pNodeId = path.join(dataDir, 'node_id');
+  const pSeed = path.join(dataDir, 'node_seed');
+  const pFp = path.join(dataDir, 'node_fingerprint');
 
-  let nodeId = (process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim();
-  if (!nodeId && stable) nodeId = stable;
+  const nowIso = () => new Date().toISOString();
+  const log = (event, obj = {}) => {
+    try {
+      console.log(JSON.stringify({ ok: true, event, ts: nowIso(), ...obj }));
+    } catch {}
+  };
 
-  if (nodeId && !stable) {
-    await fs.writeFile(p, nodeId + '\n', 'utf8');
-  }
+  const readTrim = async (p) => {
+    const raw = await fs.readFile(p, 'utf8').catch(() => null);
+    const v = raw && String(raw).trim() ? String(raw).trim() : null;
+    return v;
+  };
 
-  if (!nodeId && stable) nodeId = stable;
+  const getMachineFingerprint = async () => {
+    // Test override for validation/simulation (optional)
+    const ovr = String(process.env.A2A_MACHINE_FINGERPRINT_OVERRIDE || '').trim();
+    if (ovr) return ovr;
 
-  if (nodeId) {
+    const mid = await readTrim('/etc/machine-id').catch(() => null);
+    if (mid) return mid;
+    return os.hostname();
+  };
+
+  const deriveNodeId = ({ machineFp, seedHex } = {}) => {
+    const h = crypto.createHash('sha256').update(`a2a.node_id.v0.1|${machineFp}|${seedHex}`, 'utf8').digest('hex');
+    return `nd-${h.slice(0, 12)}`;
+  };
+
+  const machineFpNow = await getMachineFingerprint();
+  const fpRecorded = await readTrim(pFp);
+
+  const stableNodeIdExisting = await readTrim(pNodeId);
+  const seedExisting = await readTrim(pSeed);
+
+  // Clone detection: workspace copied to another machine
+  if (fpRecorded && fpRecorded !== machineFpNow) {
+    log('NODE_ID_CLONE_DETECTED', { reason: 'fingerprint_mismatch', recorded: 'present', node_id: stableNodeIdExisting || null });
+
+    const seedHex = crypto.randomBytes(16).toString('hex');
+    const nodeId = deriveNodeId({ machineFp: machineFpNow, seedHex });
+
+    await fs.writeFile(pSeed, seedHex + '\n', 'utf8');
+    await fs.writeFile(pNodeId, nodeId + '\n', 'utf8');
+    await fs.writeFile(pFp, machineFpNow + '\n', 'utf8');
+
     process.env.NODE_ID = nodeId;
     process.env.A2A_AGENT_ID = nodeId;
+
+    log('NODE_ID_REGENERATED', { node_id: nodeId, reason: 'clone_detected' });
+  } else if (stableNodeIdExisting) {
+    // Backward compatibility: never replace existing node_id
+    if (!fpRecorded) {
+      await fs.writeFile(pFp, machineFpNow + '\n', 'utf8').catch(() => {});
+    }
+    process.env.NODE_ID = stableNodeIdExisting;
+    process.env.A2A_AGENT_ID = stableNodeIdExisting;
+    log('NODE_ID_BOOTSTRAP_REUSED', { node_id: stableNodeIdExisting, reason: 'node_id_exists' });
+  } else {
+    // node_id missing
+    let seedHex = seedExisting;
+    let created = false;
+
+    if (!seedHex) {
+      seedHex = crypto.randomBytes(16).toString('hex');
+      await fs.writeFile(pSeed, seedHex + '\n', 'utf8');
+      created = true;
+    }
+
+    const nodeId = deriveNodeId({ machineFp: machineFpNow, seedHex });
+    await fs.writeFile(pNodeId, nodeId + '\n', 'utf8');
+    if (!fpRecorded) await fs.writeFile(pFp, machineFpNow + '\n', 'utf8').catch(() => {});
+
+    process.env.NODE_ID = nodeId;
+    process.env.A2A_AGENT_ID = nodeId;
+
+    if (created) log('NODE_ID_BOOTSTRAP_CREATED', { node_id: nodeId, reason: 'seed_created' });
+    else log('NODE_ID_BOOTSTRAP_CREATED', { node_id: nodeId, reason: 'seed_reused_node_id_missing' });
   }
 } catch {}
 

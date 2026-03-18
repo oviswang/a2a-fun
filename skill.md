@@ -355,19 +355,13 @@ cd a2a-fun
 export A2A_WORKSPACE_PATH=$(pwd)
 export RELAY_URL=wss://gw.bothook.me/relay
 
-# Stable node identity (persisted)
+# Stable node identity (bootstrap identity)
+# - Node ID is bootstrapped by scripts/run_agent_loop.mjs (data/node_seed + machine fingerprint -> derived node_id)
+# - Backward-compatible: if data/node_id exists, it is reused.
 mkdir -p "$A2A_WORKSPACE_PATH/data"
-if [ -f "$A2A_WORKSPACE_PATH/data/node_id" ]; then
-  export NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id")
-else
-  export NODE_ID="$(hostname)-$(openssl rand -hex 2)"
-  echo "$NODE_ID" > "$A2A_WORKSPACE_PATH/data/node_id"
-fi
-export A2A_AGENT_ID=$NODE_ID
 
-# CRITICAL: relay identity depends on NODE_ID stability.
-# - Never regenerate NODE_ID if data/node_id exists.
-# - --holder MUST equal $NODE_ID (mismatch will break relay identity).
+# NOTE: do NOT generate NODE_ID here. The runtime will create/reuse it safely.
+# We intentionally avoid the old hostname+random scheme for new installs.
 
 # Optional: Radar delivery via OpenClaw (best-effort, once per 24h)
 # export RADAR_DELIVERY_CHANNEL=whatsapp
@@ -405,7 +399,7 @@ Type=simple
 User=%u
 WorkingDirectory=$A2A_WORKSPACE_PATH
 EnvironmentFile=-$A2A_WORKSPACE_PATH/.env.runtime
-ExecStart=/bin/bash -lc 'set -euo pipefail; NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id"); export A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH"; export NODE_ID="$NODE_ID"; export A2A_AGENT_ID="$NODE_ID"; /usr/bin/env node scripts/run_agent_loop.mjs --daemon --holder "$NODE_ID"'
+ExecStart=/bin/bash -lc 'set -euo pipefail; export A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH"; /usr/bin/env node scripts/run_agent_loop.mjs --daemon --holder "$(hostname)"'
 Restart=always
 RestartSec=2
 NoNewPrivileges=true
