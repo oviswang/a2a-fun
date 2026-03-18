@@ -282,9 +282,10 @@ for i in {1..5}; do
   fi
 done
 
-# Fast, best-effort: show global network snapshot right after publish-self.
-# Must not block install if bootstrap/geo is flaky.
-node scripts/print_global_snapshot_v0_1.mjs --node-id "$NODE_ID" || true
+# First-time network experience right after publish-self (best-effort).
+# Must not block install if bootstrap/gossip is flaky.
+A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH" NODE_ID="$NODE_ID" A2A_AGENT_ID="$NODE_ID" \
+  node scripts/first_time_network_experience_v0_1.mjs || true
 
 verify:
 
@@ -323,8 +324,9 @@ for i in {1..10}; do
   fi
 done
 
-# Best-effort: show global network snapshot after directory visibility is confirmed.
-node scripts/print_global_snapshot_v0_1.mjs --node-id "$NODE_ID" || true
+# First-time network experience after directory visibility is confirmed (best-effort).
+A2A_WORKSPACE_PATH="$A2A_WORKSPACE_PATH" NODE_ID="$NODE_ID" A2A_AGENT_ID="$NODE_ID" \
+  node scripts/first_time_network_experience_v0_1.mjs || true
 
 verify:
 
