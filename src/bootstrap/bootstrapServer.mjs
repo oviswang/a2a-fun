@@ -168,7 +168,7 @@ async function saveGeoipCache() {
   } catch {}
 }
 
-async function fetchCountryCodeFromIp(ip, { timeoutMs = 350 } = {}) {
+async function fetchCountryCodeFromIp(ip, { timeoutMs = 800 } = {}) {
   // ipwho.is: lightweight, no key required (best-effort). Returns JSON.
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -195,7 +195,7 @@ async function resolveCountryCodeServerSide({ ip, headerCc } = {}) {
   const cc1 = hit?.cc && /^[A-Z]{2}$/.test(String(hit.cc)) ? String(hit.cc).toUpperCase() : null;
   if (cc1) return cc1;
 
-  const cc2 = await fetchCountryCodeFromIp(ip, { timeoutMs: 350 });
+  const cc2 = await fetchCountryCodeFromIp(ip, { timeoutMs: 800 });
   if (cc2) {
     _geoipByIp[ip] = { cc: cc2, updated_at: nowIso() };
     void saveGeoipCache();
