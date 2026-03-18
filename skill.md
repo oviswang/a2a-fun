@@ -362,6 +362,18 @@ mkdir -p "$A2A_WORKSPACE_PATH/data"
 
 # NOTE: do NOT generate NODE_ID here. The runtime will create/reuse it safely.
 # We intentionally avoid the old hostname+random scheme for new installs.
+#
+# Identity files (created/reused by scripts/run_agent_loop.mjs):
+# - data/node_seed (random 128-bit; generated once)
+# - data/node_fingerprint (records machine fingerprint; used for clone detection)
+# - data/node_id (derived: nd-<sha256(machine_fp|seed)[:12]>; stable)
+#
+# Backward compatibility:
+# - If data/node_id already exists: it is preserved and reused.
+#
+# Clone safety:
+# - If current machine fingerprint != recorded data/node_fingerprint, runtime emits NODE_ID_CLONE_DETECTED
+#   and regenerates node_seed + node_id + node_fingerprint (explicit, safe).
 
 # Optional: Radar delivery via OpenClaw (best-effort, once per 24h)
 # export RADAR_DELIVERY_CHANNEL=whatsapp
