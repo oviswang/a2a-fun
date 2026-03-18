@@ -223,6 +223,8 @@ export async function getNetworkSnapshot({
         freshness: active ? 'ACTIVE' : 'STALE',
         version: x?.version || null,
         agent_id: x?.agent_id || null,
+        trust_level: x?.trust_level || null,
+        last_verified_at: x?.last_verified_at || null,
         country_code: cc && /^[A-Z]{2}$/.test(cc) ? cc : null
       };
     })
@@ -320,6 +322,21 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
       lines.push(`- ${p.node_id} — ${sec ?? '?'}s ago`);
     }
   }
+
+  lines.push('');
+  const gp = Array.isArray(s.gossip_peers) ? s.gossip_peers : [];
+  const verified = gp.filter((p) => p.trust_level === 'VERIFIED').map((p) => p.node_id);
+  const invalid = gp.filter((p) => p.trust_level === 'INVALID').map((p) => p.node_id);
+  const unverified = gp.filter((p) => !p.trust_level || p.trust_level === 'UNVERIFIED').map((p) => p.node_id);
+
+  lines.push(`🟢 Verified peers: ${verified.length}`);
+  if (verified.length) lines.push(`- ${verified.slice(0, 8).join(', ')}`);
+
+  lines.push(`⚪ Unverified peers: ${unverified.length}`);
+  if (unverified.length) lines.push(`- ${unverified.slice(0, 8).join(', ')}`);
+
+  lines.push(`🔴 Invalid peers: ${invalid.length}`);
+  if (invalid.length) lines.push(`- ${invalid.slice(0, 8).join(', ')}`);
 
   lines.push('');
   lines.push('👋 Welcome signals:');

@@ -522,21 +522,41 @@ export async function startNodeNetworkIntegrationV0_1({
       agent_id: payload?.agent_id || prev.agent_id || null,
       public_key: payload?.public_key || prev.public_key || null,
       signature: payload?.signature || prev.signature || null,
-      agent_verified: prev.agent_verified ?? null
+      agent_verified: prev.agent_verified ?? null,
+      trust_level: prev.trust_level || null,
+      last_verified_at: prev.last_verified_at || null
     };
 
-    // Soft verification (do not block behavior): if public_key + signature exist, verify signature(public_key, node_id)
+    // Trust layer (soft; do not block behavior):
+    // - VERIFIED: signature valid
+    // - UNVERIFIED: no signature/public_key
+    // - INVALID: bad signature
     try {
       const pk = String(payload?.public_key || '').trim();
       const sigB64 = String(payload?.signature || '').trim();
+
       if (pk && sigB64) {
         const ok = crypto.verify(null, Buffer.from(String(peer_id), 'utf8'), pk, Buffer.from(sigB64, 'base64'));
         next.agent_verified = ok;
-        if (ok) log('AGENT_ID_VERIFIED', { node_id, peer_id, agent_id: next.agent_id || null });
-        else log('AGENT_ID_INVALID_SIGNATURE', { node_id, peer_id, agent_id: next.agent_id || null });
+
+        if (ok) {
+          next.trust_level = 'VERIFIED';
+          next.last_verified_at = nowIso();
+          log('AGENT_ID_VERIFIED', { node_id, peer_id, agent_id: next.agent_id || null });
+          log('PEER_TRUST_VERIFIED', { node_id, peer_id, agent_id: next.agent_id || null });
+        } else {
+          next.trust_level = 'INVALID';
+          log('AGENT_ID_INVALID_SIGNATURE', { node_id, peer_id, agent_id: next.agent_id || null });
+          log('PEER_TRUST_INVALID', { node_id, peer_id, agent_id: next.agent_id || null });
+        }
+      } else {
+        // No signature/public key -> legacy/unverified
+        next.trust_level = 'UNVERIFIED';
+        log('PEER_TRUST_UNVERIFIED', { node_id, peer_id, agent_id: next.agent_id || null });
       }
     } catch {
       // fail closed: keep prior verification state
+      if (!next.trust_level) next.trust_level = prev.trust_level || 'UNVERIFIED';
     }
 
     presenceCache.peers = presenceCache.peers && typeof presenceCache.peers === 'object' ? presenceCache.peers : {};

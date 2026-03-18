@@ -242,6 +242,9 @@ try {
       const priv = String(keypair.private_key || '').trim() || null;
       if (publicKey && priv && nodeIdFinal) {
         signature = crypto.sign(null, Buffer.from(String(nodeIdFinal), 'utf8'), priv).toString('base64');
+        // Test/diagnostic override (optional): allows simulating invalid signatures.
+        const sigOvr = String(process.env.AGENT_SIGNATURE_OVERRIDE || '').trim();
+        if (sigOvr) signature = sigOvr;
       }
     } catch {}
 
