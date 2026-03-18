@@ -20,7 +20,7 @@ function log(event, fields = {}) {
 export async function a2a_run_check(input) {
   const obj = input && typeof input === 'object' ? input : {};
   const task_type = String(obj.check_type || obj.task_type || 'runtime_status').trim();
-  const supported = new Set(['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status']);
+  const supported = new Set(['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
   if (!supported.has(task_type)) {
     return { ok: false, error: { code: 'UNSUPPORTED_TASK_TYPE', task_type } };
   }

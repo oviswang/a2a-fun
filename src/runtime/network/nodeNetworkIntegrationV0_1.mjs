@@ -536,6 +536,10 @@ export async function startNodeNetworkIntegrationV0_1({
     const sig = String(process.env.AGENT_SIGNATURE || '').trim();
     if (pk) p.public_key = pk;
     if (sig) p.signature = sig;
+
+    // Optional advertised safe task types (bounded, hint-only)
+    p.supported_task_types = ['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'];
+
     return p;
   };
 
@@ -866,7 +870,7 @@ export async function startNodeNetworkIntegrationV0_1({
                 const requestId = String(payload?.request_id || '').trim();
                 const taskType = String(payload?.task_type || payload?.check_type || '').trim();
 
-                const supported = new Set(['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status']);
+                const supported = new Set(['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
 
                 if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
                   log('TASK_REQUEST_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
@@ -874,6 +878,15 @@ export async function startNodeNetworkIntegrationV0_1({
                   const trust_status = (process.env.AGENT_SIGNATURE && process.env.AGENT_PUBLIC_KEY) ? 'VERIFIED' : 'UNVERIFIED';
 
                   let result = null;
+
+                  if (taskType === 'capability_summary') {
+                    result = {
+                      node_id,
+                      supported_task_types: ['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
+                      protocol_version: 'v0.1',
+                      trust_status
+                    };
+                  }
 
                   if (taskType === 'runtime_status') {
                     result = {
