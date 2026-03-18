@@ -247,9 +247,15 @@ export async function getNetworkSnapshot({
     }))
     .sort((a, b) => b.count - a.count || String(a.country || '').localeCompare(String(b.country || '')));
 
+  const trustRank = (t) => (t === 'VERIFIED' ? 0 : t === 'INVALID' ? 2 : 1);
   const active_peers = gossip_peers
     .filter((p) => p.freshness === 'ACTIVE')
-    .sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
+    .sort((a, b) => {
+      const ra = trustRank(a.trust_level);
+      const rb = trustRank(b.trust_level);
+      if (ra !== rb) return ra - rb;
+      return (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18);
+    });
 
   const total_nodes = boot.ok ? bootIds.size : gossipIds.size;
 

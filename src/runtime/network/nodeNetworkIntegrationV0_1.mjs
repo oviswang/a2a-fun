@@ -440,15 +440,51 @@ export async function startNodeNetworkIntegrationV0_1({
     };
     const targets = (state.known_peers || []).map((p) => p?.node_id).filter((x) => x && x !== node_id);
     const dedup = dedupPreserveOrder(targets);
+    const ordered = trustAwareOrder(dedup, { reason: 'node.join.announce' });
 
     let okCount = 0;
-    for (const to of dedup) {
+    for (const to of ordered) {
       const out = send({ to, topic: 'node.join.announce', payload });
       if (out.ok) okCount++;
     }
 
-    log('JOIN_ANNOUNCE_SENT', { node_id, peer_count: dedup.length, ok_count: okCount, ts: payload.ts });
+    log('JOIN_ANNOUNCE_SENT', { node_id, peer_count: ordered.length, ok_count: okCount, ts: payload.ts });
   };
+  const trustRank = (peer_id) => {
+    const t = presenceCache?.peers?.[peer_id]?.trust_level || null;
+    if (t === 'VERIFIED') return 0;
+    if (t === 'UNVERIFIED' || !t) return 1;
+    if (t === 'INVALID') return 2;
+    return 1;
+  };
+
+  const trustAwareOrder = (targets = [], { reason = 'generic' } = {}) => {
+    const arr = Array.isArray(targets) ? targets.filter(Boolean) : [];
+    const verified = [];
+    const unverified = [];
+    const invalid = [];
+
+    for (const id of arr) {
+      const r = trustRank(id);
+      if (r === 0) verified.push(id);
+      else if (r === 2) invalid.push(id);
+      else unverified.push(id);
+    }
+
+    const ordered = [...verified, ...unverified, ...invalid];
+
+    log('TRUST_AWARE_SELECTION_APPLIED', {
+      node_id,
+      reason,
+      verified_count: verified.length,
+      unverified_count: unverified.length,
+      invalid_count: invalid.length
+    });
+    log('TRUST_AWARE_SELECTION_RESULT', { node_id, reason, chosen_peer_order: ordered.slice(0, 50) });
+
+    return ordered;
+  };
+
   const buildGossipPeers = () => {
     const selfPeer = {
       node_id,
@@ -464,7 +500,9 @@ export async function startNodeNetworkIntegrationV0_1({
     const peersPayload = buildGossipPeers();
     const targets = (state.known_peers || []).map((p) => p?.node_id).filter((x) => x && x !== node_id);
 
-    for (const to of dedupPreserveOrder(targets)) {
+    const ordered = trustAwareOrder(dedupPreserveOrder(targets), { reason: `peer.gossip:${reason}` });
+
+    for (const to of ordered) {
       const out = send({ to, topic: 'peer.gossip', payload: { peers: peersPayload } });
       log('PEER_GOSSIP_SENT', { node_id, to, peer_count: peersPayload.length, reason, ok: out.ok });
     }
@@ -575,14 +613,15 @@ export async function startNodeNetworkIntegrationV0_1({
     const payload = buildPresencePayload();
     const targets = (state.known_peers || []).map((p) => p?.node_id).filter((x) => x && x !== node_id);
     const dedup = dedupPreserveOrder(targets);
+    const ordered = trustAwareOrder(dedup, { reason: `peer.presence:${reason}` });
 
     let okCount = 0;
-    for (const to of dedup) {
+    for (const to of ordered) {
       const out = send({ to, topic: 'peer.presence', payload });
       if (out.ok) okCount++;
     }
 
-    log('PEER_PRESENCE_GOSSIP_SENT', { node_id, peer_count: dedup.length, ok_count: okCount, reason, ts: payload.ts });
+    log('PEER_PRESENCE_GOSSIP_SENT', { node_id, peer_count: ordered.length, ok_count: okCount, reason, ts: payload.ts });
   };
 
   const startPresenceLoop = () => {
