@@ -169,14 +169,16 @@ async function saveGeoipCache() {
 }
 
 async function fetchCountryCodeFromIp(ip, { timeoutMs = 800 } = {}) {
-  // ipwho.is: lightweight, no key required (best-effort). Returns JSON.
+  // ip-api.com: lightweight, no key required (best-effort). Returns JSON.
+  // NOTE: free tier has rate limits; we cache by IP to keep calls low.
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const r = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, { signal: ac.signal });
+    const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,countryCode`;
+    const r = await fetch(url, { signal: ac.signal });
     const j = await r.json().catch(() => null);
-    const cc = j?.country_code ? String(j.country_code).trim().toUpperCase() : '';
-    if (/^[A-Z]{2}$/.test(cc)) return cc;
+    const cc = j?.countryCode ? String(j.countryCode).trim().toUpperCase() : '';
+    if (j?.status === 'success' && /^[A-Z]{2}$/.test(cc)) return cc;
     return null;
   } catch {
     return null;
