@@ -242,6 +242,24 @@ export async function getNetworkSnapshot({
 
   const total_nodes = boot.ok ? bootIds.size : gossipIds.size;
 
+  // Welcome signals (P2P first contact): local file, max 5.
+  const welcomePath = path.join(ws, 'data', 'welcome-signals.json');
+  const welcomeRaw = await readJsonSafe(welcomePath);
+  const welcomes = Array.isArray(welcomeRaw?.welcomes) ? welcomeRaw.welcomes : [];
+  const welcome_signals = welcomes
+    .map((w) => {
+      const from = String(w?.from || '').trim();
+      const ts = w?.ts || w?.received_at || null;
+      const ageMs = ts ? Date.now() - Date.parse(ts) : NaN;
+      return {
+        from: from || null,
+        ts,
+        age_ms: Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs)) : null
+      };
+    })
+    .filter((w) => w.from)
+    .slice(0, 5);
+
   return {
     ok: true,
     version: 'NETWORK_SNAPSHOT_V0_1',
@@ -260,7 +278,8 @@ export async function getNetworkSnapshot({
     bootstrap_peers,
     gossip_peers,
     country_distribution,
-    active_peers
+    active_peers,
+    welcome_signals
   };
 }
 
@@ -289,6 +308,18 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
     for (const p of act.slice(0, Math.max(1, maxActivePeers))) {
       const sec = typeof p.age_ms === 'number' ? Math.round(p.age_ms / 1000) : null;
       lines.push(`- ${p.node_id} — ${sec ?? '?'}s ago`);
+    }
+  }
+
+  lines.push('');
+  lines.push('👋 Welcome signals:');
+  const wsigs = Array.isArray(s.welcome_signals) ? s.welcome_signals : [];
+  if (!wsigs.length) {
+    lines.push('- (no welcome yet)');
+  } else {
+    for (const w of wsigs.slice(0, 5)) {
+      const sec = typeof w.age_ms === 'number' ? Math.round(w.age_ms / 1000) : null;
+      lines.push(`- ${w.from} noticed you — ${sec ?? '?'}s ago`);
     }
   }
 

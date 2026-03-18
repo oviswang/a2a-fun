@@ -387,6 +387,62 @@ export async function startNodeNetworkIntegrationV0_1({
     if (loaded && typeof loaded === 'object' && loaded.peers && typeof loaded.peers === 'object') presenceCache = loaded;
   } catch {}
 
+  // First contact (P2P acknowledgment): join announce + welcome signals
+  const welcomePath = path.join(workspacePath(), 'data', 'welcome-signals.json');
+  let welcomeState = { ok: true, version: 'welcome.v0.1', updated_at: null, welcomes: [] };
+  try {
+    const loaded = await readJsonFileSafe(welcomePath);
+    if (loaded && typeof loaded === 'object' && Array.isArray(loaded.welcomes)) welcomeState = loaded;
+  } catch {}
+
+  const saveWelcomeState = () => {
+    welcomeState.updated_at = nowIso();
+    void writeJsonAtomic(welcomePath, welcomeState).catch(() => {});
+  };
+
+  const recordWelcomeReceived = ({ from, ts }) => {
+    if (!from || from === node_id) return;
+    const item = { from, ts: ts || nowIso(), received_at: nowIso() };
+    const arr = Array.isArray(welcomeState.welcomes) ? welcomeState.welcomes : [];
+    arr.unshift(item);
+    // keep last 5
+    welcomeState.welcomes = arr.slice(0, 5);
+    saveWelcomeState();
+  };
+
+  const welcomeSentTo = new Map(); // node_id -> last_sent_ms
+  const shouldSendWelcome = (peer_id) => {
+    const last = welcomeSentTo.get(peer_id) || 0;
+    if (Date.now() - last < 10 * 60_000) return false; // 10 min cooldown per peer
+
+    // OR: first N responders only (local approximation): always welcome the first time we see this peer.
+    const firstN = Number(process.env.JOIN_WELCOME_FIRST_N || 1);
+    if (firstN > 0 && !welcomeSentTo.has(peer_id)) return true;
+
+    // Otherwise: randomized response to avoid spam.
+    const p = String(process.env.JOIN_WELCOME_PROB || '0.3');
+    const prob = Math.max(0, Math.min(1, Number(p)));
+    return Math.random() < prob;
+  };
+
+  const sendJoinAnnounceOnce = () => {
+    const payload = {
+      node_id,
+      ts: nowIso(),
+      version: String(version || '').trim() || undefined,
+      country_code: String(process.env.COUNTRY_CODE || '').trim().toUpperCase() || undefined
+    };
+    const targets = (state.known_peers || []).map((p) => p?.node_id).filter((x) => x && x !== node_id);
+    const dedup = dedupPreserveOrder(targets);
+
+    let okCount = 0;
+    for (const to of dedup) {
+      const out = send({ to, topic: 'node.join.announce', payload });
+      if (out.ok) okCount++;
+    }
+
+    log('JOIN_ANNOUNCE_SENT', { node_id, peer_count: dedup.length, ok_count: okCount, ts: payload.ts });
+  };
   const buildGossipPeers = () => {
     const selfPeer = {
       node_id,
@@ -624,6 +680,9 @@ export async function startNodeNetworkIntegrationV0_1({
           // Start peer presence gossip (P2P liveness propagation)
           startPresenceLoop();
 
+          // Announce join to known peers (P2P only; no bootstrap involvement)
+          try { sendJoinAnnounceOnce(); } catch {}
+
           // attach handlers for runtime receive loop
           ws.onmessage = (ev2) => {
             let m2 = null;
@@ -661,6 +720,34 @@ export async function startNodeNetworkIntegrationV0_1({
                 const peer_id = String(payload?.node_id || m2?.from || '').trim();
                 log('PEER_PRESENCE_GOSSIP_RECEIVED', { node_id, peer_id: peer_id || null, ts: payload?.ts || null });
                 void mergePresenceIntoCache({ peer_id, payload });
+                return;
+              }
+
+              // node.join.announce → randomized welcome back (P2P first contact)
+              if (topic === 'node.join.announce') {
+                const peer_id = String(payload?.node_id || m2?.from || '').trim();
+                if (!peer_id || peer_id === node_id) return;
+
+                // Record presence too (helps local liveness even if peer.presence not yet adopted)
+                try { void mergePresenceIntoCache({ peer_id, payload: { ...payload, node_id: peer_id } }); } catch {}
+
+                if (shouldSendWelcome(peer_id)) {
+                  const w = { to: peer_id, from: node_id, ts: nowIso() };
+                  const out = send({ to: peer_id, topic: 'node.join.welcome', payload: w });
+                  if (out.ok) welcomeSentTo.set(peer_id, Date.now());
+                  log('JOIN_WELCOME_SENT', { node_id, to: peer_id, ok: out.ok, ts: w.ts });
+                }
+                return;
+              }
+
+              // node.join.welcome → store if it's for self
+              if (topic === 'node.join.welcome') {
+                const toId = String(payload?.to || '').trim();
+                const fromId = String(payload?.from || m2?.from || '').trim();
+                if (toId && toId === node_id && fromId) {
+                  recordWelcomeReceived({ from: fromId, ts: payload?.ts || null });
+                  log('JOIN_WELCOME_RECEIVED', { node_id, from: fromId, ts: payload?.ts || null });
+                }
                 return;
               }
 
