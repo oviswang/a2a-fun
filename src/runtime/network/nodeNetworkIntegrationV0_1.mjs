@@ -147,6 +147,7 @@ export async function startNodeNetworkIntegrationV0_1({
   {
     const out = await postJson(httpClient, `${base}/publish-self`, {
       node_id,
+      agent_id: (process.env.AGENT_ID || null),
       version: version || null,
       capabilities: capabilities || {},
       relay_urls: Array.isArray(relay_urls) ? relay_urls : [],
@@ -195,6 +196,7 @@ export async function startNodeNetworkIntegrationV0_1({
 
     const out = await postJson(httpClient, `${base}/publish-self`, {
       node_id,
+      agent_id: (process.env.AGENT_ID || null),
       version: version || null,
       capabilities: capabilities || {},
       relay_urls: Array.isArray(relay_urls) ? relay_urls : [],
@@ -485,6 +487,8 @@ export async function startNodeNetworkIntegrationV0_1({
     if (ver) p.version = ver;
     const cc = String(process.env.COUNTRY_CODE || '').trim().toUpperCase();
     if (/^[A-Z]{2}$/.test(cc)) p.country_code = cc;
+    const ag = String(process.env.AGENT_ID || '').trim();
+    if (ag) p.agent_id = ag;
     return p;
   };
 
@@ -506,7 +510,8 @@ export async function startNodeNetworkIntegrationV0_1({
       relay_urls: relayUrls.length ? relayUrls : (Array.isArray(prev.relay_urls) ? prev.relay_urls : []),
       capabilities: Object.keys(caps).length ? caps : (prev.capabilities || {}),
       country_code: payload?.country_code || prev.country_code || null,
-      version: payload?.version || prev.version || null
+      version: payload?.version || prev.version || null,
+      agent_id: payload?.agent_id || prev.agent_id || null
     };
 
     presenceCache.peers = presenceCache.peers && typeof presenceCache.peers === 'object' ? presenceCache.peers : {};

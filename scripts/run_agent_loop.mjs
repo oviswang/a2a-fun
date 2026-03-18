@@ -167,6 +167,57 @@ try {
     if (created) log('NODE_ID_BOOTSTRAP_CREATED', { node_id: nodeId, reason: 'seed_created' });
     else log('NODE_ID_BOOTSTRAP_CREATED', { node_id: nodeId, reason: 'seed_reused_node_id_missing' });
   }
+
+  // Agent ID binding (DESIGN_AND_IMPLEMENT_AGENT_ID_BINDING_V0_1)
+  // - node_id: runtime instance identity (unchanged)
+  // - agent_id: stable owner/controller identity (optional for now)
+  // Binding: node_id -> agent_id (persisted locally)
+  const pAgentId = path.join(dataDir, 'agent_id');
+  const pBinding = path.join(dataDir, 'identity_binding.json');
+
+  const nodeIdFinal = String(process.env.NODE_ID || '').trim() || null;
+
+  // Input model:
+  // - If data/agent_id exists: use it.
+  // - Else if env AGENT_ID provided: persist + use it.
+  // - Else optionally create a deterministic placeholder if AGENT_ID_MODE=placeholder.
+  let agentId = await readTrim(pAgentId);
+  const provided = String(process.env.AGENT_ID || '').trim();
+  if (!agentId && provided) {
+    agentId = provided;
+    await fs.writeFile(pAgentId, agentId + '\n', 'utf8');
+  }
+
+  if (!agentId && String(process.env.AGENT_ID_MODE || '').trim() === 'placeholder') {
+    // Deterministic placeholder until real binding exists.
+    // Uses node_seed only (does not expose seed).
+    const seedHex = (await readTrim(pSeed)) || '';
+    if (seedHex) {
+      const h = crypto.createHash('sha256').update(`a2a.agent_id.placeholder.v0.1|${seedHex}`, 'utf8').digest('hex');
+      agentId = `ag-${h.slice(0, 12)}`;
+      await fs.writeFile(pAgentId, agentId + '\n', 'utf8');
+    }
+  }
+
+  if (agentId) {
+    process.env.AGENT_ID = agentId;
+    log('AGENT_ID_BOUND', { node_id: nodeIdFinal, agent_id: agentId, reason: provided ? 'env_provided' : 'file_or_placeholder' });
+  } else {
+    // Missing agent_id is allowed; node remains fully functional.
+    log('AGENT_ID_UNSET', { node_id: nodeIdFinal, reason: 'not_provided' });
+  }
+
+  // Persist binding metadata (best-effort; additive)
+  try {
+    const binding = {
+      ok: true,
+      version: 'binding.v0.1',
+      updated_at: nowIso(),
+      node_id: nodeIdFinal,
+      agent_id: agentId || null
+    };
+    await fs.writeFile(pBinding, JSON.stringify(binding, null, 2) + '\n', 'utf8');
+  } catch {}
 } catch {}
 
 const out = await runLoop({

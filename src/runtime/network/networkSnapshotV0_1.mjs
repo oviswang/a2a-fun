@@ -166,6 +166,14 @@ export async function getNetworkSnapshot({
     } catch {}
   }
 
+  // agent_id (optional; node works without it)
+  let selfAgentId = null;
+  try {
+    const raw = await fs.readFile(path.join(ws, 'data', 'agent_id'), 'utf8').catch(() => null);
+    const v = raw && String(raw).trim() ? String(raw).trim() : null;
+    if (v) selfAgentId = v;
+  } catch {}
+
   // Bootstrap peers
   const boot = await fetchJson(peersUrl, { timeoutMs: bootstrap_timeout_ms });
   const peers = Array.isArray(boot.json?.peers) ? boot.json.peers : [];
@@ -214,6 +222,7 @@ export async function getNetworkSnapshot({
         age_ms: Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs)) : null,
         freshness: active ? 'ACTIVE' : 'STALE',
         version: x?.version || null,
+        agent_id: x?.agent_id || null,
         country_code: cc && /^[A-Z]{2}$/.test(cc) ? cc : null
       };
     })
@@ -271,6 +280,7 @@ export async function getNetworkSnapshot({
     },
     self: {
       node_id: selfNodeId,
+      agent_id: selfAgentId,
       version: selfVersion,
       country_code: selfCountryCode
     },
