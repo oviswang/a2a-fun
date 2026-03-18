@@ -554,6 +554,9 @@ export async function startNodeNetworkIntegrationV0_1({
     };
     const ver = String(version || '').trim();
     if (ver) p.version = ver;
+    if (ver) p.node_version = ver;
+    const up = String(process.env.A2A_UPGRADE_STATE || '').trim();
+    if (up) p.upgrade_state = up;
     const cc = String(process.env.COUNTRY_CODE || '').trim().toUpperCase();
     if (/^[A-Z]{2}$/.test(cc)) p.country_code = cc;
     const ag = String(process.env.AGENT_ID || '').trim();
@@ -591,6 +594,8 @@ export async function startNodeNetworkIntegrationV0_1({
       capabilities: Object.keys(caps).length ? caps : (prev.capabilities || {}),
       country_code: payload?.country_code || prev.country_code || null,
       version: payload?.version || prev.version || null,
+      node_version: payload?.node_version || prev.node_version || payload?.version || prev.version || null,
+      upgrade_state: payload?.upgrade_state || prev.upgrade_state || null,
       agent_id: payload?.agent_id || prev.agent_id || null,
       public_key: payload?.public_key || prev.public_key || null,
       signature: payload?.signature || prev.signature || null,

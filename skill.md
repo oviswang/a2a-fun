@@ -74,7 +74,7 @@ PORT=3000
   - prefer verified peers when available
   - time out safely when a peer does not respond
 
-**STABLE GUARANTEE (v0.3.1)**
+**STABLE GUARANTEE (v0.3.2)**
 Guaranteed:
 - stable node startup (daemon mode)
 - relay registration + keepalive readiness signals in logs:
@@ -84,12 +84,12 @@ Guaranteed:
 - network snapshot tooling (`scripts/network_snapshot.mjs`) works
 - safe task request/response works best-effort (timeouts are expected on missing peers)
 
-Not guaranteed (v0.3.1 scope):
+Not guaranteed (v0.3.2 scope):
 - global scheduling fairness
 - reputation/incentives
 - strict delivery guarantees across mixed-version peers
 
-# Identity (v0.3.1)
+# Identity (v0.3.2)
 
 A2A uses a **stable node identity** persisted at:
 
@@ -126,7 +126,7 @@ fi
 cd a2a-fun
 
 # Stable release pin (MUST match the published stable tag)
-A2A_VERSION=v0.3.1
+A2A_VERSION=v0.3.2
 
 git fetch --tags origin
 
@@ -164,7 +164,7 @@ export RELAY_URL=wss://gw.bothook.me/relay
 export ENABLE_RELAY_INBOUND=true
 export A2A_WORKSPACE_PATH=$(pwd)
 
-# Stable node identity (v0.3.1)
+# Stable node identity (v0.3.2)
 # Source of truth: runtime writes `data/node_id`.
 mkdir -p "$A2A_WORKSPACE_PATH/data"
 

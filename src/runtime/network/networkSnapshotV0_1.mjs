@@ -185,6 +185,13 @@ export async function getNetworkSnapshot({
   } catch {}
   const selfTrustScore = selfTrustLevel === 'VERIFIED' ? 2 : selfTrustLevel === 'INVALID' ? 0 : 1;
 
+  // Local upgrade/version state (best-effort, additive)
+  const localVersionObj = await readJsonSafe(path.join(ws, 'data', 'local_version'));
+  const upgradeStateObj = await readJsonSafe(path.join(ws, 'data', 'upgrade_state.json'));
+  const selfCurrentVersion = localVersionObj && typeof localVersionObj === 'object' ? (localVersionObj.version || null) : null;
+  const selfTargetVersion = upgradeStateObj && typeof upgradeStateObj === 'object' ? (upgradeStateObj.target_version || null) : null;
+  const selfUpgradeState = upgradeStateObj && typeof upgradeStateObj === 'object' ? (upgradeStateObj.state || null) : null;
+
   // Bootstrap peers
   const boot = await fetchJson(peersUrl, { timeoutMs: bootstrap_timeout_ms });
   const peers = Array.isArray(boot.json?.peers) ? boot.json.peers : [];
@@ -233,6 +240,8 @@ export async function getNetworkSnapshot({
         age_ms: Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs)) : null,
         freshness: active ? 'ACTIVE' : 'STALE',
         version: x?.version || null,
+        node_version: x?.node_version || x?.version || null,
+        upgrade_state: x?.upgrade_state || null,
         agent_id: x?.agent_id || null,
         supported_task_types: Array.isArray(x?.supported_task_types) ? x.supported_task_types : null,
         trust_level: x?.trust_level || null,
@@ -306,7 +315,10 @@ export async function getNetworkSnapshot({
       version: selfVersion,
       country_code: selfCountryCode,
       trust_level: selfTrustLevel,
-      trust_score: selfTrustScore
+      trust_score: selfTrustScore,
+      current_version: selfCurrentVersion,
+      target_version: selfTargetVersion,
+      upgrade_state: selfUpgradeState
     },
     total_nodes,
     bootstrap_peers,
@@ -390,6 +402,19 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
     lines.push(`- top_invalid_peers: ${i}`);
     lines.push(`- quarantined: ${q}`);
     lines.push(`- trend: ${trend}`);
+
+    // Version distribution (best-effort)
+    const dist = new Map();
+    for (const p of gpAll) {
+      const vv = String(p?.node_version || p?.version || '').trim() || 'unknown';
+      dist.set(vv, (dist.get(vv) || 0) + 1);
+    }
+    const entries = Array.from(dist.entries()).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+    lines.push('');
+    lines.push('Version Distribution:');
+    for (const [vv, c] of entries.slice(0, 8)) {
+      lines.push(`- ${vv}: ${c}`);
+    }
   } catch {}
 
   lines.push('');
@@ -464,6 +489,9 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
   if (s.self?.agent_id) lines.push(`- agent_id: ${s.self.agent_id}`);
   if (s.self?.trust_level) lines.push(`- trust_status: ${s.self.trust_level}`);
   if (typeof s.self?.trust_score === 'number') lines.push(`- trust_score: ${s.self.trust_score}`);
+  if (s.self?.current_version) lines.push(`- current_version: ${s.self.current_version}`);
+  if (s.self?.target_version) lines.push(`- target_version: ${s.self.target_version}`);
+  if (s.self?.upgrade_state) lines.push(`- upgrade_state: ${s.self.upgrade_state}`);
 
   const cc = s.self?.country_code;
   if (cc && /^[A-Z]{2}$/.test(String(cc))) {

@@ -17,6 +17,7 @@ import { sendPeerGossip } from '../peers/peerGossipTransport.mjs';
 import { recordTaskExecuted } from '../peers/peerStats.mjs'; 
 import { fetchAndValidateNetworkStats } from './joinNetworkSignalStats.mjs'; 
 import { checkAndMaybeAutoUpgrade } from './autoUpgrade.mjs'; 
+import { checkAndMaybeAutoUpgradeV0_3_2 } from './upgrade/autoUpgradeV0_3_2.mjs'; 
 import { runAutoRecoveryCheck } from './autoRecovery.mjs'; 
  
 function nowIso() { 
@@ -134,13 +135,29 @@ export async function runLoop({
  try {
   if (daemon) {
    const node_id = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || h;
-   const version = String(process.env.A2A_VERSION || '').trim() || null;
+   let version = String(process.env.A2A_VERSION || '').trim() || null;
+   if (!version) {
+    try {
+     const raw = await fs.readFile(path.join(ws, 'data', 'local_version'), 'utf8').catch(() => null);
+     const j = raw ? JSON.parse(String(raw)) : null;
+     const v = j && typeof j === 'object' ? String(j.version || '').trim() : '';
+     if (v) version = v;
+    } catch {}
+   }
 
    const { loadNodeCapabilities } = await import('./nodeCapabilities.mjs');
    const caps = await loadNodeCapabilities({ workspace_path: ws }).catch(() => ({ ok: true, capabilities: [] }));
 
    const bootstrap_base_url = String(process.env.BOOTSTRAP_BASE_URL || directory || '').trim();
    const relay_url_override = String(process.env.RELAY_URL || '').trim() || null;
+
+   // Upgrade state hint (v0.3.2 additive): advertise self upgrade state via presence.
+   try {
+    const raw = await fs.readFile(path.join(ws, 'data', 'upgrade_state.json'), 'utf8').catch(() => null);
+    const j = raw ? JSON.parse(String(raw)) : null;
+    const st = j && typeof j === 'object' ? String(j.state || '').trim() : '';
+    if (st) process.env.A2A_UPGRADE_STATE = st;
+   } catch {}
 
    const { startNodeNetworkIntegrationV0_1 } = await import('./network/nodeNetworkIntegrationV0_1.mjs');
    const { handleTaskRelayMessageV0_1 } = await import('./network/taskMessageFlowV0_1.mjs');
@@ -215,10 +232,17 @@ export async function runLoop({
   }
  } catch {}
 
- // NODE_AUTO_UPGRADE_PROTOCOL_V1: low-frequency stable-tag auto-upgrade (best-effort)
+ // AUTO_UPGRADE_V0_3_2_MIN: stable version from https://a2a.fun/skill.md (best-effort)
  try {
   if (daemon && String(process.env.DISABLE_SELF_MAINTENANCE||'') !== '1') {
-   await checkAndMaybeAutoUpgrade({ workspace_path: ws, holder: h, state, state_path, checkEveryHours: 6 }).catch(() => null);
+   const useV032 = String(process.env.AUTO_UPGRADE_V0_3_2_ENABLED ?? 'true').toLowerCase() === 'true';
+   if (useV032) {
+    const node_id = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || h;
+    await checkAndMaybeAutoUpgradeV0_3_2({ workspace_path: ws, node_id, isBusy: false }).catch(() => null);
+   } else {
+    // legacy (kept for compatibility; not the primary v0.3.2 path)
+    await checkAndMaybeAutoUpgrade({ workspace_path: ws, holder: h, state, state_path, checkEveryHours: 6 }).catch(() => null);
+   }
   }
  } catch {}
 
