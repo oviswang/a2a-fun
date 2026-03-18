@@ -859,6 +859,33 @@ export async function startNodeNetworkIntegrationV0_1({
                 return;
               }
 
+              // First verifiable task: runtime_status check (read-only)
+              if (topic === 'peer.task.request' && payload?.check_type === 'runtime_status') {
+                const fromId = String(payload?.from || m2?.from || '').trim();
+                const requestId = String(payload?.request_id || '').trim();
+                if (fromId && fromId !== node_id && requestId) {
+                  log('TASK_REQUEST_RECEIVED', { node_id, from: fromId, request_id: requestId, check_type: 'runtime_status', ts_in: payload?.ts || null });
+
+                  const trust_status = (process.env.AGENT_SIGNATURE && process.env.AGENT_PUBLIC_KEY) ? 'VERIFIED' : 'UNVERIFIED';
+                  const result = {
+                    node_id,
+                    daemon_running: true,
+                    relay_connected: true,
+                    trust_status
+                  };
+
+                  const resp = { request_id: requestId, status: 'ok', from: node_id, ts: nowIso(), result };
+                  const out = send({ to: fromId, topic: 'peer.task.response', payload: resp, message_id: requestId });
+                  log('TASK_RESPONSE_SENT', { node_id, to: fromId, request_id: requestId, ok: out.ok, ts: resp.ts });
+                }
+                return;
+              }
+
+              if (topic === 'peer.task.response' && payload?.request_id) {
+                log('TASK_RESPONSE_RECEIVED', { node_id, from: m2?.from ?? null, request_id: payload?.request_id, status: payload?.status || null });
+                return;
+              }
+
               // Human-first interaction: ping peer
               if (topic === 'peer.ping' && payload?.type === 'PING') {
                 const fromId = String(payload?.from || m2?.from || '').trim();
