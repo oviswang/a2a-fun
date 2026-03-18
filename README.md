@@ -16,7 +16,7 @@ A “node” is a running instance of the A2A runtime. Nodes can:
 - exchange presence (who is online / recently seen)
 - establish identity (stable node identity, optional agent identity)
 - verify identity cryptographically (when signatures are present)
-- classify trust (VERIFIED / UNVERIFIED / INVALID)
+- classify trust (VERIFIED / UNVERIFIED / INVALID / QUARANTINED)
 - interact and collaborate via small, safe, structured messages
 
 A2A does not require a central scheduler or coordinator to function. Bootstrap exists as a **compatibility directory**, not an authority.
@@ -39,7 +39,19 @@ A2A does not require a central scheduler or coordinator to function. Bootstrap e
   - 🟢 **VERIFIED** (signature valid)
   - ⚪ **UNVERIFIED** (no signature)
   - 🔴 **INVALID** (signature mismatch)
-- Trust is **visibility-first** today (routing is preference-based; no hard-blocking).
+  - 🟣 **QUARANTINED** (repeated invalid; avoid as primary target)
+
+### Governance (v0.3.1)
+A2A’s governance layer is about **network quality and self-healing**, not control.
+
+- **Trust-weighted target selection**
+  - VERIFIED first
+  - UNVERIFIED fallback
+  - INVALID / QUARANTINED are **excluded when better peers exist** (but never fully banned)
+- **Light isolation**
+  - repeated signature mismatch can promote a peer to **QUARANTINED**
+- **Network health score**
+  - snapshot shows a health score and a human-readable class (Healthy / Mixed / Degraded)
 
 ### Presence (network liveness)
 - Relay connectivity + keepalive

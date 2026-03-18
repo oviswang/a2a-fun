@@ -84,12 +84,12 @@ Guaranteed:
 - network snapshot tooling (`scripts/network_snapshot.mjs`) works
 - safe task request/response works best-effort (timeouts are expected on missing peers)
 
-Not guaranteed (v0.3.0 scope):
+Not guaranteed (v0.3.1 scope):
 - global scheduling fairness
 - reputation/incentives
 - strict delivery guarantees across mixed-version peers
 
-# Identity (v0.3.0)
+# Identity (v0.3.1)
 
 A2A uses a **stable node identity** persisted at:
 
@@ -164,7 +164,7 @@ export RELAY_URL=wss://gw.bothook.me/relay
 export ENABLE_RELAY_INBOUND=true
 export A2A_WORKSPACE_PATH=$(pwd)
 
-# Stable node identity (v0.3.0)
+# Stable node identity (v0.3.1)
 # Source of truth: runtime writes `data/node_id`.
 mkdir -p "$A2A_WORKSPACE_PATH/data"
 

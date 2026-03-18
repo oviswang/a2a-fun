@@ -313,7 +313,8 @@ export async function getNetworkSnapshot({
     gossip_peers,
     country_distribution,
     active_peers,
-    welcome_signals
+    welcome_signals,
+    network_observation_latest: await readJsonSafe(path.join(ws, 'data', 'network_observation.latest.json'))
   };
 }
 
@@ -356,6 +357,39 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
     lines.push(`Network Health: ${pct}% ${badge}`);
     lines.push(`(VERIFIED: ${v}, UNVERIFIED: ${u}, INVALID: ${i}, QUARANTINED: ${q})`);
     lines.push(`peer_count: ${gpAll.length}`);
+
+    // Details (lightweight, human-facing)
+    lines.push('');
+    lines.push('--------------------------------');
+    lines.push('Network Health Details');
+    lines.push('--------------------------------');
+
+    const reasons = [];
+    if (gpAll.length > 0 && u / gpAll.length >= 0.6) {
+      reasons.push(`High UNVERIFIED ratio (${u}/${gpAll.length})`);
+    }
+    if (i + q > 0) {
+      reasons.push(`${i} INVALID peer(s) detected` + (q > 0 ? `, ${q} quarantined` : ''));
+    }
+    if (!reasons.length) reasons.push('No obvious trust issues detected');
+
+    lines.push('Reason:');
+    for (const r of reasons) lines.push(`- ${r}`);
+
+    const trend = (() => {
+      const prev = s.network_observation_latest;
+      const prevInvalid = typeof prev?.invalid === 'number' ? prev.invalid : null;
+      const prevTs = prev?.ts || null;
+      if (prevInvalid == null) return 'unknown';
+      if (prevInvalid < (i + q)) return 'increasing';
+      if (prevInvalid > (i + q)) return 'decreasing';
+      return 'stable';
+    })();
+
+    lines.push('Details:');
+    lines.push(`- top_invalid_peers: ${i}`);
+    lines.push(`- quarantined: ${q}`);
+    lines.push(`- trend: ${trend}`);
   } catch {}
 
   lines.push('');
