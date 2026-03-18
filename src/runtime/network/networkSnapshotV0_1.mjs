@@ -74,7 +74,20 @@ export async function getNetworkSnapshot({
   presence_active_window_ms = null,
   bootstrap_timeout_ms = 1200
 } = {}) {
-  const ws = workspace_path || process.env.A2A_WORKSPACE_PATH || process.cwd();
+  // Workspace resolution:
+  // - Prefer explicit workspace_path / A2A_WORKSPACE_PATH
+  // - Fallback: if invoked from a parent workspace (e.g. /home/ubuntu/.openclaw/workspace),
+  //   auto-detect ./a2a-fun as the real node workspace.
+  let ws = workspace_path || process.env.A2A_WORKSPACE_PATH || process.cwd();
+  try {
+    const hasNodeId = await fs.readFile(path.join(ws, 'data', 'node_id'), 'utf8').then((r) => !!String(r||'').trim()).catch(() => false);
+    if (!hasNodeId) {
+      const ws2 = path.join(ws, 'a2a-fun');
+      const has2 = await fs.readFile(path.join(ws2, 'data', 'node_id'), 'utf8').then((r) => !!String(r||'').trim()).catch(() => false);
+      if (has2) ws = ws2;
+    }
+  } catch {}
+
   const base = String(bootstrap_base_url || process.env.BOOTSTRAP_BASE_URL || 'https://bootstrap.a2a.fun').replace(/\/$/, '');
   const peersUrl = `${base}/peers`;
 
