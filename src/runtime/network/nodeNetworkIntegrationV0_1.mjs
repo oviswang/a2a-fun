@@ -162,6 +162,10 @@ export async function startNodeNetworkIntegrationV0_1({
   }
 
   // 2) heartbeat loop (best-effort)
+  // P2P note:
+  // - Relay keepalive proves connection liveness (WebSocket).
+  // - Heartbeat/publish-self prove *directory visibility* (compatibility layer).
+  // - Future: gossip-based presence can coexist; bootstrap is not the source of truth.
   let hbTimer = null;
   const heartbeat = async () => {
     const out = await postJson(httpClient, `${base}/heartbeat`, { node_id, ts: nowIso() }).catch((e) => ({
@@ -179,6 +183,47 @@ export async function startNodeNetworkIntegrationV0_1({
 
   hbTimer = setInterval(heartbeat, heartbeatEveryMs);
   hbTimer.unref();
+
+  // 2b) presence refresh loop (node-driven, directory visibility)
+  // Fixes: relay connected/registered while bootstrap last_seen stalls.
+  // This is *not* centralized polling: each node autonomously republishes itself periodically.
+  const presenceEveryMs = Number(process.env.PRESENCE_REFRESH_EVERY_MS || 30_000);
+  let presenceTimer = null;
+
+  const presenceRefreshOnce = async ({ reason = 'periodic' } = {}) => {
+    log('PRESENCE_REFRESH_ATTEMPT', { node_id, ts: nowIso(), mode: 'daemon', reason, every_ms: presenceEveryMs });
+
+    const out = await postJson(httpClient, `${base}/publish-self`, {
+      node_id,
+      version: version || null,
+      capabilities: capabilities || {},
+      relay_urls: Array.isArray(relay_urls) ? relay_urls : [],
+      observed_addrs: Array.isArray(observed_addrs) ? observed_addrs : [],
+      ts: nowIso()
+    }).catch((e) => ({ status: 0, ok: false, json: { ok: false, error: { code: 'FETCH_FAIL', reason: e.message } } }));
+
+    if (out.ok && out.json?.ok === true) {
+      log('PRESENCE_REFRESH_OK', { node_id, ts: nowIso() });
+    } else {
+      log('PRESENCE_REFRESH_FAILED', { node_id, ts: nowIso(), status: out.status, error: out.json?.error || null });
+    }
+  };
+
+  if (Number.isFinite(presenceEveryMs) && presenceEveryMs > 0) {
+    presenceTimer = setInterval(() => {
+      try {
+        void presenceRefreshOnce({ reason: 'periodic' });
+      } catch {}
+    }, presenceEveryMs);
+    presenceTimer.unref();
+
+    // Kick once soon after startup so fresh installs see liveness quickly.
+    setTimeout(() => {
+      try {
+        void presenceRefreshOnce({ reason: 'startup' });
+      } catch {}
+    }, 500).unref?.();
+  }
 
   // 3) bootstrap discovery (relays + peers) with degraded-mode cache
   const ws = workspacePath();
@@ -626,6 +671,7 @@ export async function startNodeNetworkIntegrationV0_1({
     close: async () => {
       stopping = true;
       try { if (hbTimer) clearInterval(hbTimer); } catch {}
+      try { if (presenceTimer) clearInterval(presenceTimer); } catch {}
       try { if (gossipTimer) clearInterval(gossipTimer); } catch {}
       try { if (reconnect_timer) clearTimeout(reconnect_timer); } catch {}
       reconnect_timer = null;
