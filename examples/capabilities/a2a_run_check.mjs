@@ -19,9 +19,10 @@ function log(event, fields = {}) {
 
 export async function a2a_run_check(input) {
   const obj = input && typeof input === 'object' ? input : {};
-  const check_type = String(obj.check_type || 'runtime_status').trim();
-  if (check_type !== 'runtime_status') {
-    return { ok: false, error: { code: 'UNSUPPORTED_CHECK_TYPE' } };
+  const task_type = String(obj.check_type || obj.task_type || 'runtime_status').trim();
+  const supported = new Set(['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status']);
+  if (!supported.has(task_type)) {
+    return { ok: false, error: { code: 'UNSUPPORTED_TASK_TYPE', task_type } };
   }
 
   const target_node_id = String(obj.target_node_id || '').trim();
@@ -73,7 +74,7 @@ export async function a2a_run_check(input) {
       try { m = JSON.parse(String(ev.data)); } catch { return; }
 
       if (m?.type === 'REGISTER_ACK' && m?.to === selfNodeId && m?.accepted === true) {
-        const payload = { check_type, from: selfNodeId, ts: nowIso(), request_id };
+        const payload = { task_type, check_type: task_type, from: selfNodeId, ts: nowIso(), request_id };
         const okSend = sendJson({
           type: 'SEND',
           from: selfNodeId,
@@ -81,7 +82,7 @@ export async function a2a_run_check(input) {
           message_id: request_id,
           data: { topic: 'peer.task.request', payload }
         });
-        log('TASK_REQUEST_SENT', { node_id: selfNodeId, target, request_id, ok: okSend, check_type });
+        log('TASK_REQUEST_SENT', { node_id: selfNodeId, target, request_id, ok: okSend, task_type });
         return;
       }
 
@@ -90,7 +91,7 @@ export async function a2a_run_check(input) {
         const payload = m?.data?.payload;
         if (topic === 'peer.task.response' && payload?.request_id === request_id) {
           clearTimeout(timeout);
-          log('TASK_RESPONSE_RECEIVED', { node_id: selfNodeId, from: payload?.from || m?.from || null, request_id, status: payload?.status || null });
+          log('TASK_RESPONSE_RECEIVED', { node_id: selfNodeId, from: payload?.from || m?.from || null, request_id, status: payload?.status || null, task_type: payload?.task_type || null });
           finish({ ok: true, result: { target, request_id, received: true, response: payload } });
         }
       }

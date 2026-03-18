@@ -2,6 +2,7 @@ import { createFetchHttpClient } from '../bootstrap/bootstrapClient.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { getNetworkSnapshot } from './networkSnapshotV0_1.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -728,7 +729,7 @@ export async function startNodeNetworkIntegrationV0_1({
         finish({ ok: false, error: { code: 'WS_ERROR' } });
       };
 
-      ws.onmessage = (ev) => {
+      ws.onmessage = async (ev) => {
         let msg = null;
         try { msg = JSON.parse(String(ev.data)); } catch { return; }
         state.last_message_at = nowIso();
@@ -773,7 +774,7 @@ export async function startNodeNetworkIntegrationV0_1({
           try { sendJoinAnnounceOnce(); } catch {}
 
           // attach handlers for runtime receive loop
-          ws.onmessage = (ev2) => {
+          ws.onmessage = async (ev2) => {
             let m2 = null;
             try { m2 = JSON.parse(String(ev2.data)); } catch { return; }
             state.last_message_at = nowIso();
@@ -859,24 +860,94 @@ export async function startNodeNetworkIntegrationV0_1({
                 return;
               }
 
-              // First verifiable task: runtime_status check (read-only)
-              if (topic === 'peer.task.request' && payload?.check_type === 'runtime_status') {
+              // Safe task types framework (read-only)
+              if (topic === 'peer.task.request') {
                 const fromId = String(payload?.from || m2?.from || '').trim();
                 const requestId = String(payload?.request_id || '').trim();
-                if (fromId && fromId !== node_id && requestId) {
-                  log('TASK_REQUEST_RECEIVED', { node_id, from: fromId, request_id: requestId, check_type: 'runtime_status', ts_in: payload?.ts || null });
+                const taskType = String(payload?.task_type || payload?.check_type || '').trim();
+
+                const supported = new Set(['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status']);
+
+                if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
+                  log('TASK_REQUEST_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
 
                   const trust_status = (process.env.AGENT_SIGNATURE && process.env.AGENT_PUBLIC_KEY) ? 'VERIFIED' : 'UNVERIFIED';
-                  const result = {
-                    node_id,
-                    daemon_running: true,
-                    relay_connected: true,
-                    trust_status
-                  };
 
-                  const resp = { request_id: requestId, status: 'ok', from: node_id, ts: nowIso(), result };
+                  let result = null;
+
+                  if (taskType === 'runtime_status') {
+                    result = {
+                      node_id,
+                      daemon_running: true,
+                      relay_connected: true,
+                      trust_status
+                    };
+                  }
+
+                  if (taskType === 'network_snapshot') {
+                    try {
+                      const snap = await getNetworkSnapshot({ bootstrap_timeout_ms: 500 }).catch(() => null);
+                      result = {
+                        node_id,
+                        total_nodes: snap?.total_nodes ?? null,
+                        active_peer_count: Array.isArray(snap?.active_peers) ? snap.active_peers.length : null,
+                        country_count: snap?.country_breakdown ? Object.keys(snap.country_breakdown).length : null
+                      };
+                    } catch {
+                      result = { node_id, error: 'SNAPSHOT_FAILED' };
+                    }
+                  }
+
+                  if (taskType === 'trust_summary') {
+                    try {
+                      const snap = await getNetworkSnapshot({ bootstrap_timeout_ms: 500 }).catch(() => null);
+                      const gp = Array.isArray(snap?.gossip_peers) ? snap.gossip_peers : [];
+                      const counts = { VERIFIED: 0, UNVERIFIED: 0, INVALID: 0 };
+                      for (const p of gp) {
+                        const t = String(p?.trust_level || 'UNVERIFIED');
+                        if (t === 'VERIFIED') counts.VERIFIED++;
+                        else if (t === 'INVALID') counts.INVALID++;
+                        else counts.UNVERIFIED++;
+                      }
+                      result = { node_id, trust_status, peers: counts };
+                    } catch {
+                      result = { node_id, trust_status, error: 'TRUST_SUMMARY_FAILED' };
+                    }
+                  }
+
+                  if (taskType === 'presence_status') {
+                    try {
+                      const snap = await getNetworkSnapshot({ bootstrap_timeout_ms: 500 }).catch(() => null);
+                      result = {
+                        node_id,
+                        trust_status,
+                        active_peer_count: Array.isArray(snap?.active_peers) ? snap.active_peers.length : null,
+                        gossip_peer_count: Array.isArray(snap?.gossip_peers) ? snap.gossip_peers.length : null,
+                        bootstrap_peer_count: Array.isArray(snap?.bootstrap_peers) ? snap.bootstrap_peers.length : null
+                      };
+                    } catch {
+                      result = { node_id, trust_status, error: 'PRESENCE_STATUS_FAILED' };
+                    }
+                  }
+
+                  const resp = { request_id: requestId, status: 'ok', from: node_id, ts: nowIso(), result, task_type: taskType };
                   const out = send({ to: fromId, topic: 'peer.task.response', payload: resp, message_id: requestId });
-                  log('TASK_RESPONSE_SENT', { node_id, to: fromId, request_id: requestId, ok: out.ok, ts: resp.ts });
+                  log('TASK_RESPONSE_SENT', { node_id, to: fromId, request_id: requestId, task_type: taskType, ok: out.ok, ts: resp.ts });
+                  return;
+                }
+
+                if (fromId && fromId !== node_id && requestId) {
+                  log('TASK_REQUEST_UNSUPPORTED', { node_id, from: fromId, request_id: requestId, task_type: taskType || null });
+                  const resp = {
+                    request_id: requestId,
+                    status: 'error',
+                    from: node_id,
+                    ts: nowIso(),
+                    task_type: taskType || null,
+                    result: { error: 'UNSUPPORTED_TASK_TYPE' }
+                  };
+                  const out = send({ to: fromId, topic: 'peer.task.response', payload: resp, message_id: requestId });
+                  log('TASK_RESPONSE_SENT', { node_id, to: fromId, request_id: requestId, task_type: taskType || null, ok: out.ok, ts: resp.ts });
                 }
                 return;
               }
