@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 
 function nowIso() {
   return new Date().toISOString();
@@ -48,6 +49,10 @@ async function fetchJson(url, { timeoutMs = 1200 } = {}) {
 }
 
 function pickCountryCodeFromPeer(peer) {
+  // Prefer explicit peer-level country_code when available.
+  const direct = peer?.country_code ? String(peer.country_code).trim().toUpperCase() : '';
+  if (/^[A-Z]{2}$/.test(direct)) return direct;
+
   const addrs = Array.isArray(peer?.observed_addrs) ? peer.observed_addrs : [];
   for (const a of addrs) {
     if (!a || typeof a !== 'object') continue;
@@ -75,10 +80,33 @@ export async function getNetworkSnapshot({
 
   const presenceWindowMs = Number(presence_active_window_ms || process.env.PRESENCE_ACTIVE_WINDOW_MS || 120_000);
 
-  const selfNodeId = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || null;
-  const selfVersion = String(process.env.A2A_VERSION || '').trim() || null;
+  // Self identity (prefer workspace truth; env is optional)
+  let selfNodeId = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || null;
+  if (!selfNodeId) {
+    try {
+      const raw = await fs.readFile(path.join(ws, 'data', 'node_id'), 'utf8');
+      const v = String(raw || '').trim();
+      if (v) selfNodeId = v;
+    } catch {}
+  }
+
+  let selfVersion = String(process.env.A2A_VERSION || '').trim() || null;
+  if (!selfVersion) {
+    // Try git HEAD (fast, local) then package.json
+    try {
+      const rev = String(execSync('git rev-parse --short HEAD', { cwd: ws, stdio: ['ignore', 'pipe', 'ignore'] })).trim();
+      if (rev) selfVersion = rev;
+    } catch {}
+  }
+  if (!selfVersion) {
+    try {
+      const pkg = await readJsonSafe(path.join(ws, 'package.json'));
+      if (pkg?.version) selfVersion = String(pkg.version);
+    } catch {}
+  }
+
   const selfCountry = String(process.env.COUNTRY_CODE || '').trim().toUpperCase();
-  const selfCountryCode = /^[A-Z]{2}$/.test(selfCountry) ? selfCountry : null;
+  let selfCountryCode = /^[A-Z]{2}$/.test(selfCountry) ? selfCountry : null;
 
   // Bootstrap peers
   const boot = await fetchJson(peersUrl, { timeoutMs: bootstrap_timeout_ms });
@@ -101,6 +129,13 @@ export async function getNetworkSnapshot({
     .sort((a, b) => String(a.node_id).localeCompare(String(b.node_id)));
 
   const bootIds = new Set(bootstrap_peers.map((p) => p.node_id));
+
+  // If country_code wasn't available locally, try to derive from bootstrap's view of self.
+  if (!selfCountryCode && selfNodeId) {
+    const selfRow = peers.find((p) => String(p?.node_id || '') === selfNodeId) || null;
+    const cc = selfRow ? pickCountryCodeFromPeer(selfRow) : null;
+    if (cc) selfCountryCode = cc;
+  }
 
   // Gossip peers from local presence-cache
   const presenceCachePath = path.join(ws, 'data', 'presence-cache.json');
