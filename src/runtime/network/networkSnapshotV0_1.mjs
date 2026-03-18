@@ -93,33 +93,78 @@ export async function getNetworkSnapshot({
 
   const presenceWindowMs = Number(presence_active_window_ms || process.env.PRESENCE_ACTIVE_WINDOW_MS || 120_000);
 
-  // Self identity (prefer workspace truth; env is optional)
-  let selfNodeId = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || null;
+  // --------------------
+  // Self identity resolution (strict order; user-trustable)
+  // --------------------
+
+  // 1) node_id
+  let selfNodeId = null;
+  // PRIMARY: $A2A_WORKSPACE_PATH/data/node_id (resolved workspace)
+  try {
+    const raw = await fs.readFile(path.join(ws, 'data', 'node_id'), 'utf8');
+    const v = String(raw || '').trim();
+    if (v) selfNodeId = v;
+  } catch {}
+  // SECONDARY: process.env.NODE_ID
+  if (!selfNodeId) {
+    const v = String(process.env.NODE_ID || '').trim();
+    if (v) selfNodeId = v;
+  }
+  // FALLBACK: runtime state (if available)
   if (!selfNodeId) {
     try {
-      const raw = await fs.readFile(path.join(ws, 'data', 'node_id'), 'utf8');
-      const v = String(raw || '').trim();
+      const st = await readJsonSafe(path.join(ws, 'data', 'runtime_state.json'));
+      const v = String(st?.node_id || st?.holder || '').trim();
       if (v) selfNodeId = v;
     } catch {}
   }
+  // IF ALL FAIL
+  if (!selfNodeId) selfNodeId = 'unknown (node not initialized)';
 
-  let selfVersion = String(process.env.A2A_VERSION || '').trim() || null;
-  if (!selfVersion) {
-    // Try git HEAD (fast, local) then package.json
-    try {
-      const rev = String(execSync('git rev-parse --short HEAD', { cwd: ws, stdio: ['ignore', 'pipe', 'ignore'] })).trim();
-      if (rev) selfVersion = rev;
-    } catch {}
-  }
+  // 2) version
+  let selfVersion = null;
+  // PRIMARY: git HEAD (short)
+  try {
+    const rev = String(execSync('git rev-parse --short HEAD', { cwd: ws, stdio: ['ignore', 'pipe', 'ignore'] })).trim();
+    if (rev) selfVersion = rev;
+  } catch {}
+  // SECONDARY: package.json version
   if (!selfVersion) {
     try {
       const pkg = await readJsonSafe(path.join(ws, 'package.json'));
       if (pkg?.version) selfVersion = String(pkg.version);
     } catch {}
   }
+  // FALLBACK
+  if (!selfVersion) selfVersion = 'unknown';
 
-  const selfCountry = String(process.env.COUNTRY_CODE || '').trim().toUpperCase();
-  let selfCountryCode = /^[A-Z]{2}$/.test(selfCountry) ? selfCountry : null;
+  // 3) country_code
+  // PRIMARY: local cached value (presence-cache/runtime/local config)
+  let selfCountryCode = null;
+  try {
+    const ccFile = await fs.readFile(path.join(ws, 'data', 'country_code'), 'utf8').catch(() => null);
+    const v = String(ccFile || '').trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(v)) selfCountryCode = v;
+  } catch {}
+  if (!selfCountryCode) {
+    const v = String(process.env.COUNTRY_CODE || '').trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(v)) selfCountryCode = v;
+  }
+  if (!selfCountryCode) {
+    try {
+      const pc0 = await readJsonSafe(path.join(ws, 'data', 'presence-cache.json'));
+      const entry = pc0?.peers && typeof pc0.peers === 'object' ? pc0.peers[selfNodeId] : null;
+      const v = String(entry?.country_code || '').trim().toUpperCase();
+      if (/^[A-Z]{2}$/.test(v)) selfCountryCode = v;
+    } catch {}
+  }
+  if (!selfCountryCode) {
+    try {
+      const st = await readJsonSafe(path.join(ws, 'data', 'runtime_state.json'));
+      const v = String(st?.country_code || '').trim().toUpperCase();
+      if (/^[A-Z]{2}$/.test(v)) selfCountryCode = v;
+    } catch {}
+  }
 
   // Bootstrap peers
   const boot = await fetchJson(peersUrl, { timeoutMs: bootstrap_timeout_ms });
@@ -144,7 +189,7 @@ export async function getNetworkSnapshot({
   const bootIds = new Set(bootstrap_peers.map((p) => p.node_id));
 
   // If country_code wasn't available locally, try to derive from bootstrap's view of self.
-  if (!selfCountryCode && selfNodeId) {
+  if (!selfCountryCode && selfNodeId && !selfNodeId.startsWith('unknown')) {
     const selfRow = peers.find((p) => String(p?.node_id || '') === selfNodeId) || null;
     const cc = selfRow ? pickCountryCodeFromPeer(selfRow) : null;
     if (cc) selfCountryCode = cc;
@@ -248,7 +293,13 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
   }
 
   lines.push('');
-  lines.push(`You are: ${s.self?.node_id || 'unknown'}`);
+  const you = s.self?.node_id || 'unknown (node not initialized)';
+  lines.push(`You are: ${you}`);
+
+  const cc = s.self?.country_code;
+  if (cc && /^[A-Z]{2}$/.test(String(cc))) {
+    lines.push(`Your location: ${flagFromCc(cc)} ${countryNameFromCc(cc)}`);
+  }
 
   return lines.join('\n');
 }
