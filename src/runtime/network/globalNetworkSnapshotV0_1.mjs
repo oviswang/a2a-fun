@@ -71,6 +71,32 @@ function pickPublicIp(peer) {
   return null;
 }
 
+function pickCountryCode(peer) {
+  const addrs = Array.isArray(peer?.observed_addrs) ? peer.observed_addrs : [];
+  for (const a of addrs) {
+    if (!a || typeof a !== 'object') continue;
+    const cc = a.country_code ? String(a.country_code).trim().toUpperCase() : '';
+    if (/^[A-Z]{2}$/.test(cc)) return cc;
+
+    // Back-compat: some systems may stash cc in region
+    const r = a.region ? String(a.region).trim().toUpperCase() : '';
+    if (/^[A-Z]{2}$/.test(r)) return r;
+  }
+  return null;
+}
+
+function countryNameFromCc(cc) {
+  const c = String(cc || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(c)) return null;
+  try {
+    // Node builtin; no external dependency.
+    const dn = new Intl.DisplayNames(['en'], { type: 'region' });
+    return dn.of(c) || c;
+  } catch {
+    return c;
+  }
+}
+
 async function fetchJsonWithTimeout(url, { timeoutMs = 800 } = {}) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -247,6 +273,14 @@ export async function buildGlobalNetworkSnapshotV0_1({
 
   const byCountry = new Map();
   for (const n of nodes) {
+    // Preferred: server-side truth embedded into observed_addrs.country_code
+    const ccObs = pickCountryCode(n);
+    if (ccObs) {
+      byCountry.set(ccObs, (byCountry.get(ccObs) || 0) + 1);
+      continue;
+    }
+
+    // Fallback: client-provided IP → best-effort lookup + cache
     const ip = pickPublicIp(n);
     const hit = ip ? cacheIps[ip] : null;
     const cc = hit && hit.cc && /^[A-Z]{2}$/.test(String(hit.cc)) ? String(hit.cc).toUpperCase() : 'unknown';
@@ -254,19 +288,25 @@ export async function buildGlobalNetworkSnapshotV0_1({
   }
 
   const regions = [...byCountry.entries()]
-    .map(([cc, count]) => ({ cc, count }))
+    .map(([cc, count]) => ({ cc, name: cc === 'unknown' ? 'Unknown' : (countryNameFromCc(cc) || cc), count }))
     .sort((a, b) => b.count - a.count || String(a.cc).localeCompare(String(b.cc)));
 
   // self location
   let selfLocation = { cc: 'unknown', name: 'Unknown', flag: '🌍' };
   if (selfId) {
     const selfNode = nodes.find((n) => n.node_id === selfId) || null;
-    const selfIp = selfNode ? pickPublicIp(selfNode) : null;
-    const hit = selfIp ? cacheIps[selfIp] : null;
-    const cc = hit && hit.cc ? String(hit.cc).toUpperCase() : null;
-    const name = hit && hit.name ? String(hit.name) : null;
-    if (cc && /^[A-Z]{2}$/.test(cc)) {
-      selfLocation = { cc, name: name || cc, flag: flagFromCc(cc) || '🌍' };
+
+    const ccObs = selfNode ? pickCountryCode(selfNode) : null;
+    if (ccObs) {
+      selfLocation = { cc: ccObs, name: countryNameFromCc(ccObs) || ccObs, flag: flagFromCc(ccObs) || '🌍' };
+    } else {
+      const selfIp = selfNode ? pickPublicIp(selfNode) : null;
+      const hit = selfIp ? cacheIps[selfIp] : null;
+      const cc = hit && hit.cc ? String(hit.cc).toUpperCase() : null;
+      const name = hit && hit.name ? String(hit.name) : null;
+      if (cc && /^[A-Z]{2}$/.test(cc)) {
+        selfLocation = { cc, name: name || countryNameFromCc(cc) || cc, flag: flagFromCc(cc) || '🌍' };
+      }
     }
   }
 
@@ -296,17 +336,13 @@ export function formatGlobalNetworkSnapshotV0_1(snapshot, { topN = 8 } = {}) {
 
   const regions = Array.isArray(s.top_regions) ? s.top_regions : [];
   if (regions.length) {
-    lines.push('Top regions:');
-    lines.push('');
     for (const r of regions.slice(0, Math.max(1, topN))) {
       const cc = r.cc || 'unknown';
       const flag = cc !== 'unknown' ? (flagFromCc(cc) || '🌍') : '🌍';
-      const name = cc === 'unknown' ? 'Unknown' : cc;
+      const name = r.name || (cc === 'unknown' ? 'Unknown' : cc);
       lines.push(`${flag} ${name}: ${r.count}`);
     }
   } else {
-    lines.push('Top regions:');
-    lines.push('');
     lines.push('🌍 Unknown: 0');
   }
 

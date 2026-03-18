@@ -84,6 +84,7 @@ function normalizeStringArray(arr, { maxItems = 20, maxLen = 300 } = {}) {
 
 function normalizeObservedAddrs(x) {
   // Accept either strings or objects; store as-is but bounded.
+  // IMPORTANT: keep this stable and small; bootstrap is the “truth source”.
   if (!Array.isArray(x)) return [];
   const out = [];
   for (const it of x) {
@@ -97,11 +98,49 @@ function normalizeObservedAddrs(x) {
       if (isNonEmptyString(it.public_ip, { max: 80 })) o.public_ip = String(it.public_ip).trim();
       if (isNonEmptyString(it.local_ip, { max: 80 })) o.local_ip = String(it.local_ip).trim();
       if (isNonEmptyString(it.region, { max: 80 })) o.region = String(it.region).trim();
+      // geo-derived fields (server-side preferred)
+      if (isNonEmptyString(it.country_code, { max: 2 })) o.country_code = String(it.country_code).trim().toUpperCase();
+      if (isNonEmptyString(it.country_name, { max: 80 })) o.country_name = String(it.country_name).trim();
+      if (isNonEmptyString(it.source, { max: 40 })) o.source = String(it.source).trim();
       if (Object.keys(o).length > 0) out.push(o);
     }
     if (out.length >= 20) break;
   }
   return out;
+}
+
+function normalizeIpLike(x) {
+  if (!isNonEmptyString(x, { max: 120 })) return null;
+  let s = String(x).trim();
+  // x-forwarded-for may contain a list
+  if (s.includes(',')) s = s.split(',')[0].trim();
+  // strip port
+  if (s.includes(':') && !s.includes('::')) {
+    // might be ipv6; handle ipv4:port only
+    const m = s.match(/^([0-9.]+):\d+$/);
+    if (m) s = m[1];
+  }
+  if (s.startsWith('::ffff:')) s = s.slice('::ffff:'.length);
+  return s || null;
+}
+
+function getForwardedPublicIp(req) {
+  // Prefer proxy truth when available.
+  // Caddy commonly sets X-Forwarded-For; Cloudflare sets CF-Connecting-IP.
+  const h = req?.headers || {};
+  return (
+    normalizeIpLike(h['cf-connecting-ip']) ||
+    normalizeIpLike(h['x-forwarded-for']) ||
+    normalizeIpLike(h['x-real-ip']) ||
+    normalizeIpLike(req?.socket?.remoteAddress)
+  );
+}
+
+function getForwardedCountryCode(req) {
+  const h = req?.headers || {};
+  const cc = String(h['cf-ipcountry'] || h['x-country-code'] || '').trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(cc)) return cc;
+  return null;
 }
 
 function parseIso(x) {
@@ -182,7 +221,33 @@ export function createBootstrapServer({
         const version = isNonEmptyString(body?.version, { max: 80 }) ? String(body.version).trim() : null;
         const capabilities = body?.capabilities && typeof body.capabilities === 'object' ? body.capabilities : {};
         const relay_urls = normalizeStringArray(body?.relay_urls, { maxItems: 20, maxLen: 300 });
-        const observed_addrs = normalizeObservedAddrs(body?.observed_addrs);
+
+        // Geo-aware: do NOT rely on node-side guessing only.
+        // If node did not send observed_addrs, derive from proxy/server truth.
+        const observed_addrs_client = normalizeObservedAddrs(body?.observed_addrs);
+        const ip0 = getForwardedPublicIp(req);
+        const cc0 = getForwardedCountryCode(req);
+
+        let observed_addrs = observed_addrs_client;
+        if ((!observed_addrs || observed_addrs.length === 0) && ip0) {
+          observed_addrs = normalizeObservedAddrs([
+            {
+              public_ip: ip0,
+              country_code: cc0 || undefined,
+              // keep region as a soft fallback for older tooling
+              region: cc0 || 'unknown',
+              source: 'bootstrap_derived'
+            }
+          ]);
+        } else if (observed_addrs && observed_addrs.length > 0 && cc0) {
+          // If client provided IP but not country, enrich the first addr object.
+          const first = observed_addrs[0];
+          if (first && typeof first === 'object' && !first.country_code) {
+            first.country_code = cc0;
+            if (!first.region) first.region = cc0;
+            if (!first.source) first.source = 'bootstrap_enriched';
+          }
+        }
 
         const ts = isNonEmptyString(body?.ts, { max: 80 }) ? String(body.ts).trim() : nowIso();
         const last_seen = nowIso();
