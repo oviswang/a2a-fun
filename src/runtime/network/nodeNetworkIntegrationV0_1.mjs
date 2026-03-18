@@ -840,6 +840,28 @@ export async function startNodeNetworkIntegrationV0_1({
                 return;
               }
 
+              // Human-first interaction: ping peer
+              if (topic === 'peer.ping' && payload?.type === 'PING') {
+                const fromId = String(payload?.from || m2?.from || '').trim();
+                if (fromId && fromId !== node_id) {
+                  log('PING_RECEIVED', { node_id, from: fromId, ts_in: payload?.ts || null });
+                  // Optional reply: PONG
+                  const pong = { type: 'PONG', to: fromId, from: node_id, ts: nowIso() };
+                  const out = send({ to: fromId, topic: 'peer.pong', payload: pong });
+                  log('PONG_SENT', { node_id, to: fromId, ok: out.ok, ts: pong.ts });
+                }
+                return;
+              }
+
+              if (topic === 'peer.pong' && payload?.type === 'PONG') {
+                const toId = String(payload?.to || '').trim();
+                const fromId = String(payload?.from || m2?.from || '').trim();
+                if (toId && toId === node_id && fromId) {
+                  log('PONG_RECEIVED', { node_id, from: fromId, ts_in: payload?.ts || null });
+                }
+                return;
+              }
+
               try {
                 if (typeof onDeliver === 'function') {
                   onDeliver({
