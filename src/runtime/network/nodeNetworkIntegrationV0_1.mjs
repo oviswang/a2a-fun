@@ -840,6 +840,25 @@ export async function startNodeNetworkIntegrationV0_1({
                 return;
               }
 
+              // First collaboration: request help (echo_ack)
+              if (topic === 'peer.help.request' && payload?.request_type === 'echo_ack') {
+                const fromId = String(payload?.from || m2?.from || '').trim();
+                const requestId = String(payload?.request_id || '').trim();
+                if (fromId && fromId !== node_id && requestId) {
+                  log('HELP_REQUEST_RECEIVED', { node_id, from: fromId, request_id: requestId, ts_in: payload?.ts || null });
+                  const resp = { request_id: requestId, status: 'ok', from: node_id, ts: nowIso(), message: 'acknowledged' };
+                  const out = send({ to: fromId, topic: 'peer.help.response', payload: resp, message_id: requestId });
+                  log('HELP_RESPONSE_SENT', { node_id, to: fromId, request_id: requestId, ok: out.ok, ts: resp.ts });
+                }
+                return;
+              }
+
+              if (topic === 'peer.help.response' && payload?.request_id) {
+                // Receiver-side visibility (sender already logs in capability; daemon can also log if it receives one)
+                log('HELP_RESPONSE_RECEIVED', { node_id, from: m2?.from ?? null, request_id: payload?.request_id, status: payload?.status || null });
+                return;
+              }
+
               // Human-first interaction: ping peer
               if (topic === 'peer.ping' && payload?.type === 'PING') {
                 const fromId = String(payload?.from || m2?.from || '').trim();
