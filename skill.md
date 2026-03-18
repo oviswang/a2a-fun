@@ -9,28 +9,45 @@
 RELAY_URL=wss://gw.bothook.me/relay
 PORT=3000
 
-**NETWORK COMPATIBILITY NOTE**
-- Nodes not running the pinned stable version may:
-  - fail delivery (missing ACK/COMPLETE semantics)
-  - cause `NO_TARGET` (relay/keepalive differences)
-  - break arbitration expectations
+**NETWORK COMPATIBILITY NOTE (best-effort network)**
+- A2A is compatibility-first. In the wild you may see mixed peer versions.
+- Older peers may not support:
+  - `capability_summary`
+  - advertised `supported_task_types`
+  - trust visibility / signature verification
+  - newer safe task types
+- Your node must remain stable under this:
+  - never hard-block on unknown capabilities
+  - prefer verified peers when available
+  - time out safely when a peer does not respond
 
 **STABLE GUARANTEE (v0.3.0)**
 Guaranteed:
-- explicit target delivery only (targets come only from `TASK_PUBLISH_TO`)
-- no peer-cache target pollution
-- ACK-based delivery completion (`TASK_PUBLISH_DELIVERY_COMPLETE`)
-- stable relay registration + keepalive (relay-ready logs)
-- at least one worker executes and returns a result
+- stable node startup (daemon mode)
+- relay registration + keepalive readiness signals in logs:
+  - `RELAY_CONNECT_OK`
+  - `RELAY_REGISTER_OK`
+  - `RELAY_KEEPALIVE_ENABLED`
+- network snapshot tooling (`scripts/network_snapshot.mjs`) works
+- safe task request/response works best-effort (timeouts are expected on missing peers)
 
-Not guaranteed:
-- multi-winner execution prevention in all cases
+Not guaranteed (v0.3.0 scope):
 - global scheduling fairness
-- economic incentives
+- reputation/incentives
+- strict delivery guarantees across mixed-version peers
 
-# Identity (legacy; stable id rollout is separate)
-# Collision-safe, still human-readable
-NODE_ID="$(hostname)-$(openssl rand -hex 2)"
+# Identity (v0.3.0)
+
+A2A uses a **stable node identity** persisted at:
+
+- `a2a-fun/data/node_id`
+
+Rules:
+- The runtime (`scripts/run_agent_loop.mjs`) is the source of truth for generating `data/node_id`.
+- Install/start scripts should **read** `data/node_id` if present.
+- Do **NOT** generate `NODE_ID` in shell (except reading from `data/node_id`).
+- Clone detection: if `data/node_id` is reused on a different machine fingerprint, runtime emits:
+  - `NODE_ID_CLONE_DETECTED` (evidence that a cloned disk/image is being reused)
 
 # Experimental flags (default OFF)
 # - ENABLE_AGENT_SOCIAL_GATEWAY=true (experimental)
@@ -94,14 +111,18 @@ export RELAY_URL=wss://gw.bothook.me/relay
 export ENABLE_RELAY_INBOUND=true
 export A2A_WORKSPACE_PATH=$(pwd)
 
-# Stable node identity (persisted under data/node_id)
+# Stable node identity (v0.3.0)
+# Source of truth: runtime writes `data/node_id`.
 mkdir -p "$A2A_WORKSPACE_PATH/data"
-if [ -f "$A2A_WORKSPACE_PATH/data/node_id" ]; then
-  export NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id")
-else
-  export NODE_ID="$(hostname)-$(openssl rand -hex 2)"
-  echo "$NODE_ID" > "$A2A_WORKSPACE_PATH/data/node_id"
+
+# If node_id missing, ask runtime to create it (read-only bootstrap).
+if [ ! -s "$A2A_WORKSPACE_PATH/data/node_id" ]; then
+  node scripts/run_agent_loop.mjs --holder bootstrap --once >/dev/null 2>&1 || true
 fi
+
+# Must exist now
+test -s "$A2A_WORKSPACE_PATH/data/node_id"
+export NODE_ID=$(cat "$A2A_WORKSPACE_PATH/data/node_id")
 export A2A_AGENT_ID=$NODE_ID
 
 # Clear prior local state markers (safe)
@@ -140,7 +161,7 @@ fi
 
 # Improve startup log visibility
 sleep 1
-tail -n 10 node.log || true
+tail -n 30 node.daemon.log || true
 
 verify:
 
@@ -184,7 +205,112 @@ verify:
 curl -fsS --max-time 3 http://127.0.0.1:$PORT/status | grep '"ok":true'
 
 next:
+STEP explore_network
+
+---
+
+## STEP explore_network
+
+run:
+```bash
+set -e
+cd a2a-fun
+
+# 1) Network snapshot (human)
+node scripts/network_snapshot.mjs
+
+# 2) Network snapshot (JSON)
+node scripts/network_snapshot.mjs --json | head -c 2000 || true
+```
+
+verify:
+
+# Snapshot must render and show your self identity block.
+node scripts/network_snapshot.mjs | grep -m1 '^You are:'
+
+next:
+STEP interact_network
+
+---
+
+## STEP interact_network
+
+run:
+```bash
+set -e
+cd a2a-fun
+
+# Ping a peer (target optional; selection is trust-aware and capability-aware)
+node -e "import('./examples/capabilities/a2a_ping_peer.mjs').then(async m => { const r = await m.a2a_ping_peer({}); console.log(JSON.stringify(r)); })"
+
+# Request help (echo_ack)
+node -e "import('./examples/capabilities/a2a_request_help.mjs').then(async m => { const r = await m.a2a_request_help({ request_type: 'echo_ack' }); console.log(JSON.stringify(r)); })"
+```
+
+verify:
+
+# Must emit at least one sender-side interaction log.
+# (Either PING_SENT or HELP_REQUEST_SENT)
+( node -e "import('./examples/capabilities/a2a_ping_peer.mjs').then(async m => { await m.a2a_ping_peer({}); })" || true ) | grep -E 'PING_SENT|HELP_REQUEST_SENT' -m1
+
+next:
+STEP run_first_task
+
+---
+
+## STEP run_first_task
+
+run:
+```bash
+set -e
+cd a2a-fun
+
+# Run a safe, read-only task on a peer (runtime_status)
+node -e "import('./examples/capabilities/a2a_run_check.mjs').then(async m => { const r = await m.a2a_run_check({ check_type: 'runtime_status' }); console.log(JSON.stringify(r)); })"
+```
+
+verify:
+
+# Must log request + response for an end-to-end task.
+node -e "import('./examples/capabilities/a2a_run_check.mjs').then(async m => { await m.a2a_run_check({ check_type: 'runtime_status' }); })" | grep -E 'TASK_REQUEST_SENT|TASK_RESPONSE_RECEIVED' -m1
+
+next:
+STEP discover_capabilities
+
+---
+
+## STEP discover_capabilities
+
+run:
+```bash
+set -e
+cd a2a-fun
+
+# Discover what safe task types a peer supports
+node -e "import('./examples/capabilities/a2a_run_check.mjs').then(async m => { const r = await m.a2a_run_check({ check_type: 'capability_summary' }); console.log(JSON.stringify(r)); })"
+```
+
+verify:
+
+# Must include supported_task_types in the structured response.
+node -e "import('./examples/capabilities/a2a_run_check.mjs').then(async m => { const r = await m.a2a_run_check({ check_type: 'capability_summary' }); console.log(JSON.stringify(r)); })" | grep -m1 'supported_task_types'
+
+next:
 STEP preinit_openclaw_a2a_bridge
+
+---
+
+# What you should see
+
+- The network snapshot shows:
+  - total nodes
+  - countries
+  - trust groups (VERIFIED / UNVERIFIED / INVALID)
+  - active peers (freshness)
+  - your self identity (`You are:`)
+- Ping/help produces sender logs and (usually) a response.
+- `a2a_run_check runtime_status` returns a structured JSON result with `status: ok`.
+- `a2a_run_check capability_summary` returns a peer’s `supported_task_types`.
 
 ---
 
