@@ -143,6 +143,65 @@ function getForwardedCountryCode(req) {
   return null;
 }
 
+// Lightweight server-side GeoIP (best-effort) for authoritative bootstrap country_code.
+// - Do NOT rely on client guessing.
+// - Cache by IP to avoid repeated external calls.
+const GEOIP_CACHE_PATH = process.env.BOOTSTRAP_GEOIP_CACHE_FILE || 'data/bootstrap-geoip-cache.json';
+let _geoipCacheLoaded = false;
+let _geoipByIp = {}; // ip -> { cc, updated_at }
+
+async function loadGeoipCacheOnce() {
+  if (_geoipCacheLoaded) return;
+  _geoipCacheLoaded = true;
+  try {
+    const raw = await fs.readFile(GEOIP_CACHE_PATH, 'utf8');
+    const j = JSON.parse(String(raw || '{}'));
+    if (j && typeof j === 'object' && j.ips && typeof j.ips === 'object') _geoipByIp = j.ips;
+  } catch {}
+}
+
+async function saveGeoipCache() {
+  try {
+    await fs.mkdir(path.dirname(GEOIP_CACHE_PATH), { recursive: true });
+    const out = { ok: true, updated_at: nowIso(), ips: _geoipByIp };
+    await fs.writeFile(GEOIP_CACHE_PATH, JSON.stringify(out, null, 2) + '\n', 'utf8');
+  } catch {}
+}
+
+async function fetchCountryCodeFromIp(ip, { timeoutMs = 350 } = {}) {
+  // ipapi.co: lightweight; returns 2-letter code at /country/
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/country/`, { signal: ac.signal });
+    const text = String(await r.text()).trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(text)) return text;
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function resolveCountryCodeServerSide({ ip, headerCc } = {}) {
+  const cc0 = headerCc && /^[A-Z]{2}$/.test(String(headerCc)) ? String(headerCc).toUpperCase() : null;
+  if (cc0) return cc0;
+  if (!ip) return null;
+
+  await loadGeoipCacheOnce();
+  const hit = _geoipByIp[ip];
+  const cc1 = hit?.cc && /^[A-Z]{2}$/.test(String(hit.cc)) ? String(hit.cc).toUpperCase() : null;
+  if (cc1) return cc1;
+
+  const cc2 = await fetchCountryCodeFromIp(ip, { timeoutMs: 350 });
+  if (cc2) {
+    _geoipByIp[ip] = { cc: cc2, updated_at: nowIso() };
+    void saveGeoipCache();
+  }
+  return cc2;
+}
+
 function parseIso(x) {
   try {
     const d = new Date(String(x));
@@ -226,7 +285,8 @@ export function createBootstrapServer({
         // If node did not send observed_addrs, derive from proxy/server truth.
         const observed_addrs_client = normalizeObservedAddrs(body?.observed_addrs);
         const ip0 = getForwardedPublicIp(req);
-        const cc0 = getForwardedCountryCode(req);
+        const cc0_header = getForwardedCountryCode(req);
+        const cc0 = await resolveCountryCodeServerSide({ ip: ip0, headerCc: cc0_header });
 
         let observed_addrs = observed_addrs_client;
         if ((!observed_addrs || observed_addrs.length === 0) && ip0) {
@@ -261,6 +321,7 @@ export function createBootstrapServer({
           capabilities: capabilities ?? prev.capabilities ?? {},
           relay_urls: relay_urls.length > 0 ? relay_urls : prev.relay_urls ?? [],
           observed_addrs: observed_addrs.length > 0 ? observed_addrs : prev.observed_addrs ?? [],
+          country_code: cc0 || prev.country_code || null,
           ts,
           last_seen
         };
@@ -306,6 +367,24 @@ export function createBootstrapServer({
         }
 
         const last_seen = nowIso();
+
+        // Best-effort enrichment on heartbeat too (some nodes may miss publish-self refresh).
+        const ip0 = getForwardedPublicIp(req);
+        const cc0_header = getForwardedCountryCode(req);
+        const cc0 = await resolveCountryCodeServerSide({ ip: ip0, headerCc: cc0_header });
+
+        let observed_addrs = Array.isArray(prev?.observed_addrs) ? prev.observed_addrs : [];
+        if ((!observed_addrs || observed_addrs.length === 0) && ip0) {
+          observed_addrs = normalizeObservedAddrs([
+            {
+              public_ip: ip0,
+              country_code: cc0 || undefined,
+              region: cc0 || 'unknown',
+              source: 'bootstrap_heartbeat'
+            }
+          ]);
+        }
+
         const next = {
           ok: true,
           version: 'registry.v0.1',
@@ -314,6 +393,8 @@ export function createBootstrapServer({
             ...reg.nodes,
             [node_id]: {
               ...prev,
+              country_code: cc0 || prev.country_code || null,
+              observed_addrs,
               last_seen
             }
           }
@@ -343,6 +424,7 @@ export function createBootstrapServer({
           peers.push({
             node_id: n.node_id,
             version: n.version ?? null,
+            country_code: n.country_code ?? null,
             relay_urls: Array.isArray(n.relay_urls) ? n.relay_urls : [],
             observed_addrs: Array.isArray(n.observed_addrs) ? n.observed_addrs : [],
             last_seen: n.last_seen,
