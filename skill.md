@@ -74,7 +74,7 @@ PORT=3000
   - prefer verified peers when available
   - time out safely when a peer does not respond
 
-**STABLE GUARANTEE (v0.3.2)**
+**STABLE GUARANTEE (v0.3.3)**
 Guaranteed:
 - stable node startup (daemon mode)
 - relay registration + keepalive readiness signals in logs:
@@ -84,7 +84,7 @@ Guaranteed:
 - network snapshot tooling (`scripts/network_snapshot.mjs`) works
 - safe task request/response works best-effort (timeouts are expected on missing peers)
 
-Not guaranteed (v0.3.2 scope):
+Not guaranteed (v0.3.3 scope):
 - global scheduling fairness
 - reputation/incentives
 - strict delivery guarantees across mixed-version peers
@@ -126,7 +126,7 @@ fi
 cd a2a-fun
 
 # Stable release pin (MUST match the published stable tag)
-A2A_VERSION=v0.3.2
+A2A_VERSION=v0.3.3
 
 git fetch --tags origin
 

@@ -191,6 +191,8 @@ export async function getNetworkSnapshot({
   const selfCurrentVersion = localVersionObj && typeof localVersionObj === 'object' ? (localVersionObj.version || null) : null;
   const selfTargetVersion = upgradeStateObj && typeof upgradeStateObj === 'object' ? (upgradeStateObj.target_version || null) : null;
   const selfUpgradeState = upgradeStateObj && typeof upgradeStateObj === 'object' ? (upgradeStateObj.state || null) : null;
+  const selfReleaseSigStatus = upgradeStateObj && typeof upgradeStateObj === 'object' ? (upgradeStateObj.release_signature_status || null) : null;
+  const selfReleaseSource = upgradeStateObj && typeof upgradeStateObj === 'object' ? (upgradeStateObj.release_source || null) : null;
 
   // Bootstrap peers
   const boot = await fetchJson(peersUrl, { timeoutMs: bootstrap_timeout_ms });
@@ -318,7 +320,9 @@ export async function getNetworkSnapshot({
       trust_score: selfTrustScore,
       current_version: selfCurrentVersion,
       target_version: selfTargetVersion,
-      upgrade_state: selfUpgradeState
+      upgrade_state: selfUpgradeState,
+      release_signature_status: selfReleaseSigStatus,
+      release_source: selfReleaseSource
     },
     total_nodes,
     bootstrap_peers,
@@ -496,6 +500,14 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
   const cc = s.self?.country_code;
   if (cc && /^[A-Z]{2}$/.test(String(cc))) {
     lines.push(`- location: ${flagFromCc(cc)} ${countryNameFromCc(cc)}`);
+  }
+
+  // Release security (v0.3.3 signed releases)
+  if (s.self?.release_signature_status || s.self?.release_source) {
+    lines.push('');
+    lines.push('Release Security:');
+    if (s.self?.release_signature_status) lines.push(`- signature: ${s.self.release_signature_status}`);
+    if (s.self?.release_source) lines.push(`- source: ${s.self.release_source}`);
   }
 
   return lines.join('\n');

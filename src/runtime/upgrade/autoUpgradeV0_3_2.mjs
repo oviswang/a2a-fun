@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { verifyReleaseManifest } from '../security/verifyRelease.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -62,6 +64,21 @@ async function fetchTextWithTimeout(url, timeoutMs) {
     return { ok: false, error: { code: 'FETCH_FAILED', message: String(e?.message || e) } };
   } finally {
     clearTimeout(t);
+  }
+}
+
+function sha256Hex(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs) {
+  const r = await fetchTextWithTimeout(url, timeoutMs);
+  if (!r.ok) return r;
+  try {
+    const j = JSON.parse(String(r.text || ''));
+    return { ok: true, json: j };
+  } catch {
+    return { ok: false, error: { code: 'JSON_PARSE_FAILED' } };
   }
 }
 
@@ -165,7 +182,9 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
     retry_count: 0,
     last_error: null,
     previous_version: null,
-    previous_ref: null
+    previous_ref: null,
+    release_signature_status: null,
+    release_source: null
   };
 
   // guard: no concurrent
@@ -188,9 +207,62 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
   log('UPGRADE_CHECK_STARTED', { node_id: node_id || null, local_version: local_v, local_git, local_commit });
 
   const override = String(process.env.AUTO_UPGRADE_TARGET_OVERRIDE || '').trim();
-  const targetRes = override ? { ok: true, version: override } : await fetchTargetVersionFromSkill({});
+
+  // v0.3.3 signed releases: prefer release.json, fallback to skill.md if unavailable.
+  let targetRes = null;
+  let releaseSigStatus = 'UNKNOWN';
+  let releaseSource = null;
+
+  if (override) {
+    targetRes = { ok: true, version: override };
+    releaseSource = 'override';
+  } else {
+    const relUrl = String(process.env.RELEASE_MANIFEST_URL || 'https://a2a.fun/release.json').trim();
+    const rel = await fetchJsonWithTimeout(relUrl, 3000);
+    if (!rel.ok) {
+      log('RELEASE_FETCH_FAILED', { node_id: node_id || null, url: relUrl, error: rel.error || null });
+      log('RELEASE_MANIFEST_UNAVAILABLE_FALLBACK', { node_id: node_id || null, url: relUrl, fallback: 'skill.md' });
+      targetRes = await fetchTargetVersionFromSkill({});
+      releaseSource = 'skill.md';
+    } else {
+      releaseSource = 'release.json';
+      const man = rel.json;
+      const v = String(man?.version || '').trim();
+      const vr = verifyReleaseManifest(man);
+      if (vr.ok) {
+        releaseSigStatus = 'VALID';
+        log('RELEASE_SIGNATURE_VALID', { node_id: node_id || null, version: v || null });
+
+        // Anti-tamper: verify skill.md hash matches manifest
+        const skillUrl = String(process.env.SKILL_MD_URL || 'https://a2a.fun/skill.md').trim();
+        const sk = await fetchTextWithTimeout(skillUrl, 3000);
+        if (sk.ok) {
+          const got = 'sha256:' + sha256Hex(Buffer.from(sk.text || '', 'utf8'));
+          const want = String(man?.skill_md_hash || '').trim();
+          if (want && got === want) {
+            log('SKILL_MD_HASH_MATCH', { node_id: node_id || null });
+            targetRes = { ok: true, version: v };
+          } else {
+            log('SKILL_MD_HASH_MISMATCH', { node_id: node_id || null, want: want || null, got });
+            // Block upgrade when hash mismatches
+            targetRes = { ok: false, error: { code: 'SKILL_MD_HASH_MISMATCH' } };
+          }
+        } else {
+          // If cannot fetch skill.md, block upgrade (manifest is valid but content cannot be verified)
+          targetRes = { ok: false, error: { code: 'SKILL_MD_FETCH_FAILED' } };
+        }
+      } else {
+        releaseSigStatus = 'INVALID';
+        log('RELEASE_SIGNATURE_INVALID', { node_id: node_id || null, reason: vr.reason || 'INVALID_SIGNATURE' });
+        // Block upgrade when signature invalid
+        targetRes = { ok: false, error: { code: 'RELEASE_SIGNATURE_INVALID' } };
+      }
+    }
+  }
 
   const nextState = { ...state0, state: 'checking', last_checked_at: nowIso(), last_error: null };
+  nextState.release_signature_status = releaseSigStatus;
+  nextState.release_source = releaseSource;
   if (!targetRes.ok) {
     nextState.state = 'steady';
     nextState.last_error = targetRes.error;
@@ -204,12 +276,6 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
   nextState.current_version = local_v;
 
   log('UPGRADE_CHECK_RESULT', { node_id: node_id || null, local_version: local_v, target_version, version_check_status: 'OK' });
-
-  if (!AUTO_UPGRADE_ENABLED) {
-    nextState.state = 'steady';
-    await writeJsonAtomic(upgradeStatePath, nextState).catch(() => {});
-    return { ok: true, checked: true, version_check_status: 'OK', auto_upgrade: 'DISABLED' };
-  }
 
   const lv = parseSemver(local_v);
   const tv = parseSemver(target_version);
@@ -230,6 +296,11 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
   nextState.state = 'upgrade_needed';
   await writeJsonAtomic(upgradeStatePath, nextState).catch(() => {});
   log('UPGRADE_NEEDED', { node_id: node_id || null, local_version: local_v, target_version });
+
+  if (!AUTO_UPGRADE_ENABLED) {
+    // Still surface upgrade_needed, but do not apply.
+    return { ok: true, checked: true, upgrade_needed: true, deferred: true, reason: 'AUTO_UPGRADE_DISABLED' };
+  }
 
   if (isBusy) {
     log('UPGRADE_SKIPPED_BUSY', { node_id: node_id || null, local_version: local_v, target_version, reason: 'BUSY' });
