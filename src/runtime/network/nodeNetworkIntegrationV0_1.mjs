@@ -148,6 +148,8 @@ export async function startNodeNetworkIntegrationV0_1({
     const out = await postJson(httpClient, `${base}/publish-self`, {
       node_id,
       agent_id: (process.env.AGENT_ID || null),
+      public_key: (process.env.AGENT_PUBLIC_KEY || null),
+      signature: (process.env.AGENT_SIGNATURE || null),
       version: version || null,
       capabilities: capabilities || {},
       relay_urls: Array.isArray(relay_urls) ? relay_urls : [],
@@ -197,6 +199,8 @@ export async function startNodeNetworkIntegrationV0_1({
     const out = await postJson(httpClient, `${base}/publish-self`, {
       node_id,
       agent_id: (process.env.AGENT_ID || null),
+      public_key: (process.env.AGENT_PUBLIC_KEY || null),
+      signature: (process.env.AGENT_SIGNATURE || null),
       version: version || null,
       capabilities: capabilities || {},
       relay_urls: Array.isArray(relay_urls) ? relay_urls : [],
@@ -489,6 +493,10 @@ export async function startNodeNetworkIntegrationV0_1({
     if (/^[A-Z]{2}$/.test(cc)) p.country_code = cc;
     const ag = String(process.env.AGENT_ID || '').trim();
     if (ag) p.agent_id = ag;
+    const pk = String(process.env.AGENT_PUBLIC_KEY || '').trim();
+    const sig = String(process.env.AGENT_SIGNATURE || '').trim();
+    if (pk) p.public_key = pk;
+    if (sig) p.signature = sig;
     return p;
   };
 
@@ -511,8 +519,25 @@ export async function startNodeNetworkIntegrationV0_1({
       capabilities: Object.keys(caps).length ? caps : (prev.capabilities || {}),
       country_code: payload?.country_code || prev.country_code || null,
       version: payload?.version || prev.version || null,
-      agent_id: payload?.agent_id || prev.agent_id || null
+      agent_id: payload?.agent_id || prev.agent_id || null,
+      public_key: payload?.public_key || prev.public_key || null,
+      signature: payload?.signature || prev.signature || null,
+      agent_verified: prev.agent_verified ?? null
     };
+
+    // Soft verification (do not block behavior): if public_key + signature exist, verify signature(public_key, node_id)
+    try {
+      const pk = String(payload?.public_key || '').trim();
+      const sigB64 = String(payload?.signature || '').trim();
+      if (pk && sigB64) {
+        const ok = crypto.verify(null, Buffer.from(String(peer_id), 'utf8'), pk, Buffer.from(sigB64, 'base64'));
+        next.agent_verified = ok;
+        if (ok) log('AGENT_ID_VERIFIED', { node_id, peer_id, agent_id: next.agent_id || null });
+        else log('AGENT_ID_INVALID_SIGNATURE', { node_id, peer_id, agent_id: next.agent_id || null });
+      }
+    } catch {
+      // fail closed: keep prior verification state
+    }
 
     presenceCache.peers = presenceCache.peers && typeof presenceCache.peers === 'object' ? presenceCache.peers : {};
     presenceCache.peers[peer_id] = next;

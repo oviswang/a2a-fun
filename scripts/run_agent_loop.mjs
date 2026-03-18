@@ -173,14 +173,25 @@ try {
   // - agent_id: stable owner/controller identity (optional for now)
   // Binding: node_id -> agent_id (persisted locally)
   const pAgentId = path.join(dataDir, 'agent_id');
+  const pKeypair = path.join(dataDir, 'agent_keypair.json');
   const pBinding = path.join(dataDir, 'identity_binding.json');
 
   const nodeIdFinal = String(process.env.NODE_ID || '').trim() || null;
 
+  const sha256hex = (s) => crypto.createHash('sha256').update(String(s), 'utf8').digest('hex');
+
+  const readJsonSafe = async (p) => {
+    try {
+      const raw = await fs.readFile(p, 'utf8');
+      return JSON.parse(String(raw || '{}'));
+    } catch {
+      return null;
+    }
+  };
+
   // Input model:
-  // - If data/agent_id exists: use it.
-  // - Else if env AGENT_ID provided: persist + use it.
-  // - Else optionally create a deterministic placeholder if AGENT_ID_MODE=placeholder.
+  // - Legacy: if data/agent_id exists (or env AGENT_ID provided), keep it.
+  // - Verifiable mode: if AGENT_ID_MODE=verifiable and no agent_id exists, derive agent_id from public_key.
   let agentId = await readTrim(pAgentId);
   const provided = String(process.env.AGENT_ID || '').trim();
   if (!agentId && provided) {
@@ -188,20 +199,57 @@ try {
     await fs.writeFile(pAgentId, agentId + '\n', 'utf8');
   }
 
+  // Keypair: generate once if agent_id exists but no keypair.
+  let keypair = await readJsonSafe(pKeypair);
+  const hasKeypair = !!(keypair?.public_key && keypair?.private_key);
+
+  const ensureKeypair = async () => {
+    if (hasKeypair) return keypair;
+    const kp = crypto.generateKeyPairSync('ed25519', {
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+    const next = { public_key: kp.publicKey, private_key: kp.privateKey };
+    await fs.writeFile(pKeypair, JSON.stringify(next, null, 2) + '\n', 'utf8');
+    return next;
+  };
+
+  // If agent_id missing but verifiable mode requested, derive agent_id from keypair.
+  if (!agentId && String(process.env.AGENT_ID_MODE || '').trim() === 'verifiable') {
+    keypair = await ensureKeypair();
+    const h = sha256hex(keypair.public_key).slice(0, 12);
+    agentId = `ag-${h}`;
+    await fs.writeFile(pAgentId, agentId + '\n', 'utf8');
+  }
+
+  // Placeholder mode (older behavior) remains supported.
   if (!agentId && String(process.env.AGENT_ID_MODE || '').trim() === 'placeholder') {
-    // Deterministic placeholder until real binding exists.
-    // Uses node_seed only (does not expose seed).
     const seedHex = (await readTrim(pSeed)) || '';
     if (seedHex) {
-      const h = crypto.createHash('sha256').update(`a2a.agent_id.placeholder.v0.1|${seedHex}`, 'utf8').digest('hex');
-      agentId = `ag-${h.slice(0, 12)}`;
+      const h = sha256hex(`a2a.agent_id.placeholder.v0.1|${seedHex}`).slice(0, 12);
+      agentId = `ag-${h}`;
       await fs.writeFile(pAgentId, agentId + '\n', 'utf8');
     }
   }
 
+  // If agent_id exists but keypair missing, generate keypair (verifiable identity becomes available).
+  let publicKey = null;
+  let signature = null;
   if (agentId) {
+    try {
+      keypair = await ensureKeypair();
+      publicKey = String(keypair.public_key || '').trim() || null;
+      const priv = String(keypair.private_key || '').trim() || null;
+      if (publicKey && priv && nodeIdFinal) {
+        signature = crypto.sign(null, Buffer.from(String(nodeIdFinal), 'utf8'), priv).toString('base64');
+      }
+    } catch {}
+
     process.env.AGENT_ID = agentId;
-    log('AGENT_ID_BOUND', { node_id: nodeIdFinal, agent_id: agentId, reason: provided ? 'env_provided' : 'file_or_placeholder' });
+    if (publicKey) process.env.AGENT_PUBLIC_KEY = publicKey;
+    if (signature) process.env.AGENT_SIGNATURE = signature;
+
+    log('AGENT_ID_BOUND', { node_id: nodeIdFinal, agent_id: agentId, reason: provided ? 'env_provided' : 'file_or_mode' });
   } else {
     // Missing agent_id is allowed; node remains fully functional.
     log('AGENT_ID_UNSET', { node_id: nodeIdFinal, reason: 'not_provided' });
@@ -211,10 +259,12 @@ try {
   try {
     const binding = {
       ok: true,
-      version: 'binding.v0.1',
+      version: 'v0.1',
       updated_at: nowIso(),
       node_id: nodeIdFinal,
-      agent_id: agentId || null
+      agent_id: agentId || null,
+      public_key: publicKey || null,
+      signature: signature || null
     };
     await fs.writeFile(pBinding, JSON.stringify(binding, null, 2) + '\n', 'utf8');
   } catch {}
