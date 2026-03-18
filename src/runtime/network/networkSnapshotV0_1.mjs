@@ -174,6 +174,17 @@ export async function getNetworkSnapshot({
     if (v) selfAgentId = v;
   } catch {}
 
+  // Self trust context (local): if binding includes public_key + signature, self is VERIFIED.
+  let selfTrustLevel = 'UNVERIFIED';
+  try {
+    const b = await readJsonSafe(path.join(ws, 'data', 'identity_binding.json'));
+    const hasPk = !!String(b?.public_key || '').trim();
+    const hasSig = !!String(b?.signature || '').trim();
+    if (hasPk && hasSig) selfTrustLevel = 'VERIFIED';
+    else if (!selfAgentId) selfTrustLevel = 'UNVERIFIED';
+  } catch {}
+  const selfTrustScore = selfTrustLevel === 'VERIFIED' ? 2 : selfTrustLevel === 'INVALID' ? 0 : 1;
+
   // Bootstrap peers
   const boot = await fetchJson(peersUrl, { timeoutMs: bootstrap_timeout_ms });
   const peers = Array.isArray(boot.json?.peers) ? boot.json.peers : [];
@@ -290,7 +301,9 @@ export async function getNetworkSnapshot({
       node_id: selfNodeId,
       agent_id: selfAgentId,
       version: selfVersion,
-      country_code: selfCountryCode
+      country_code: selfCountryCode,
+      trust_level: selfTrustLevel,
+      trust_score: selfTrustScore
     },
     total_nodes,
     bootstrap_peers,
@@ -331,18 +344,35 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
 
   lines.push('');
   const gp = Array.isArray(s.gossip_peers) ? s.gossip_peers : [];
-  const verified = gp.filter((p) => p.trust_level === 'VERIFIED').map((p) => p.node_id);
-  const invalid = gp.filter((p) => p.trust_level === 'INVALID').map((p) => p.node_id);
-  const unverified = gp.filter((p) => !p.trust_level || p.trust_level === 'UNVERIFIED').map((p) => p.node_id);
 
-  lines.push(`🟢 Verified peers: ${verified.length}`);
-  if (verified.length) lines.push(`- ${verified.slice(0, 8).join(', ')}`);
+  const trustScore = (t) => (t === 'VERIFIED' ? 2 : t === 'INVALID' ? 0 : 1);
+  const fmtPeerLine = (p, { hint = null } = {}) => {
+    const sec = typeof p.age_ms === 'number' ? Math.round(p.age_ms / 1000) : null;
+    const ag = p.agent_id ? String(p.agent_id) : null;
+    const bits = [`- ${p.node_id}`, `${sec ?? '?'}s ago`];
+    if (ag) bits.push(ag);
+    if (hint) bits.push(hint);
+    bits.push(`trust_score: ${trustScore(p.trust_level)}`);
+    return bits.join(' — ');
+  };
 
-  lines.push(`⚪ Unverified peers: ${unverified.length}`);
-  if (unverified.length) lines.push(`- ${unverified.slice(0, 8).join(', ')}`);
+  const verifiedPeers = gp.filter((p) => p.trust_level === 'VERIFIED').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
+  const unverifiedPeers = gp.filter((p) => !p.trust_level || p.trust_level === 'UNVERIFIED').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
+  const invalidPeers = gp.filter((p) => p.trust_level === 'INVALID').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
 
-  lines.push(`🔴 Invalid peers: ${invalid.length}`);
-  if (invalid.length) lines.push(`- ${invalid.slice(0, 8).join(', ')}`);
+  lines.push('🟢 VERIFIED (trusted)');
+  if (!verifiedPeers.length) lines.push('- (none)');
+  else for (const p of verifiedPeers.slice(0, 8)) lines.push(fmtPeerLine(p));
+
+  lines.push('');
+  lines.push('⚪ UNVERIFIED (unknown)');
+  if (!unverifiedPeers.length) lines.push('- (none)');
+  else for (const p of unverifiedPeers.slice(0, 8)) lines.push(fmtPeerLine(p, { hint: 'no signature' }));
+
+  lines.push('');
+  lines.push('🔴 INVALID (suspicious)');
+  if (!invalidPeers.length) lines.push('- (none)');
+  else for (const p of invalidPeers.slice(0, 8)) lines.push(fmtPeerLine(p, { hint: 'signature mismatch' }));
 
   lines.push('');
   lines.push('👋 Welcome signals:');
@@ -357,12 +387,15 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
   }
 
   lines.push('');
-  const you = s.self?.node_id || 'unknown (node not initialized)';
-  lines.push(`You are: ${you}`);
+  lines.push('You are:');
+  lines.push(`- node_id: ${s.self?.node_id || 'unknown (node not initialized)'}`);
+  if (s.self?.agent_id) lines.push(`- agent_id: ${s.self.agent_id}`);
+  if (s.self?.trust_level) lines.push(`- trust_status: ${s.self.trust_level}`);
+  if (typeof s.self?.trust_score === 'number') lines.push(`- trust_score: ${s.self.trust_score}`);
 
   const cc = s.self?.country_code;
   if (cc && /^[A-Z]{2}$/.test(String(cc))) {
-    lines.push(`Your location: ${flagFromCc(cc)} ${countryNameFromCc(cc)}`);
+    lines.push(`- location: ${flagFromCc(cc)} ${countryNameFromCc(cc)}`);
   }
 
   return lines.join('\n');
