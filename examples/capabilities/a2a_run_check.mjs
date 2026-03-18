@@ -1,4 +1,6 @@
 import { getNetworkSnapshot } from '../../src/runtime/network/networkSnapshotV0_1.mjs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 async function pickWebSocketCtor() {
   try {
@@ -33,10 +35,62 @@ export async function a2a_run_check(input) {
     return { ok: false, error: { code: 'SELF_ID_UNKNOWN' } };
   }
 
+  const cachePath = path.join(String(process.env.A2A_WORKSPACE_PATH || process.cwd()), 'data', 'capability-summary-cache.json');
+  let capabilityCache = { ok: true, updated_at: null, peers: {} };
+  try {
+    const raw = await fs.readFile(cachePath, 'utf8').catch(() => null);
+    const j = raw ? JSON.parse(String(raw)) : null;
+    if (j && typeof j === 'object' && j.peers && typeof j.peers === 'object') capabilityCache = j;
+  } catch {}
+
+  const trustScore = (t) => (t === 'VERIFIED' ? 2 : t === 'INVALID' ? 0 : 1);
+  const supportsTask = (p) => {
+    const nodeId = String(p?.node_id || '').trim();
+    const arr = Array.isArray(p?.supported_task_types)
+      ? p.supported_task_types
+      : (capabilityCache.peers?.[nodeId]?.supported_task_types || null);
+    if (!arr || !Array.isArray(arr)) return null; // unknown
+    return arr.includes(task_type);
+  };
+
   let target = target_node_id || null;
   if (!target) {
     const ap = Array.isArray(snap?.active_peers) ? snap.active_peers : [];
-    target = ap.length ? String(ap[0].node_id) : null;
+    const bp = Array.isArray(snap?.bootstrap_peers) ? snap.bootstrap_peers : [];
+    const base = ap.length ? ap : bp;
+
+    const candidates = base
+      .map((p) => ({
+        // bootstrap_peers use node_id; active_peers use node_id
+        node_id: String(p?.node_id || '').trim(),
+        trust_level: p?.trust_level || 'UNVERIFIED',
+        age_ms: typeof p?.age_ms === 'number' ? p.age_ms : null,
+        capability_match: supportsTask(p) // true | false | null(unknown)
+      }))
+      .filter((x) => x.node_id);
+
+    log('MATCH_CANDIDATES', { task_type, candidates });
+
+    const explicitlySupported = candidates.filter((c) => c.capability_match === true);
+    const pool = explicitlySupported.length ? explicitlySupported : candidates;
+
+    pool.sort((a, b) => {
+      const ta = trustScore(a.trust_level);
+      const tb = trustScore(b.trust_level);
+      if (ta !== tb) return tb - ta; // higher first
+      const aa = a.age_ms ?? 1e18;
+      const ab = b.age_ms ?? 1e18;
+      if (aa !== ab) return aa - ab; // fresher first
+      return String(a.node_id).localeCompare(String(b.node_id));
+    });
+
+    target = pool.length ? pool[0].node_id : null;
+
+    log('MATCH_SELECTED', {
+      task_type,
+      chosen: target,
+      reason: explicitlySupported.length ? 'trust+capability match' : 'trust-aware fallback'
+    });
   }
   if (!target) return { ok: false, error: { code: 'NO_TARGET_PEER' } };
 
@@ -69,7 +123,7 @@ export async function a2a_run_check(input) {
       sendJson({ type: 'REGISTER', from: selfNodeId, ts: nowIso() });
     };
 
-    ws.onmessage = (ev) => {
+    ws.onmessage = async (ev) => {
       let m;
       try { m = JSON.parse(String(ev.data)); } catch { return; }
 
@@ -92,6 +146,22 @@ export async function a2a_run_check(input) {
         if (topic === 'peer.task.response' && payload?.request_id === request_id) {
           clearTimeout(timeout);
           log('TASK_RESPONSE_RECEIVED', { node_id: selfNodeId, from: payload?.from || m?.from || null, request_id, status: payload?.status || null, task_type: payload?.task_type || null });
+
+          // Cache last-known capability_summary responses (local-only hint)
+          try {
+            if (payload?.task_type === 'capability_summary' && payload?.status === 'ok') {
+              const peerId = String(payload?.from || '').trim();
+              const stt = Array.isArray(payload?.result?.supported_task_types) ? payload.result.supported_task_types.slice(0, 12) : null;
+              if (peerId && stt && stt.length) {
+                capabilityCache.peers = capabilityCache.peers && typeof capabilityCache.peers === 'object' ? capabilityCache.peers : {};
+                capabilityCache.peers[peerId] = { supported_task_types: stt, updated_at: nowIso(), protocol_version: payload?.result?.protocol_version || 'v0.1' };
+                capabilityCache.updated_at = nowIso();
+                await fs.mkdir(path.dirname(cachePath), { recursive: true }).catch(() => {});
+                await fs.writeFile(cachePath, JSON.stringify(capabilityCache, null, 2) + '\n', 'utf8').catch(() => {});
+              }
+            }
+          } catch {}
+
           finish({ ok: true, result: { target, request_id, received: true, response: payload } });
         }
       }

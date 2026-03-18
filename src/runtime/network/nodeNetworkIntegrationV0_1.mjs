@@ -552,6 +552,9 @@ export async function startNodeNetworkIntegrationV0_1({
 
     const relayUrls = Array.isArray(payload?.relay_urls) ? payload.relay_urls.filter((u) => typeof u === 'string' && u.trim()).slice(0, 6) : [];
     const caps = payload?.capabilities && typeof payload.capabilities === 'object' ? payload.capabilities : {};
+    const supportedTaskTypes = Array.isArray(payload?.supported_task_types)
+      ? payload.supported_task_types.filter((x) => typeof x === 'string' && x.trim()).map((x) => String(x).trim()).slice(0, 8)
+      : null;
 
     const prev = presenceCache.peers?.[peer_id] && typeof presenceCache.peers[peer_id] === 'object' ? presenceCache.peers[peer_id] : {};
 
@@ -565,6 +568,7 @@ export async function startNodeNetworkIntegrationV0_1({
       agent_id: payload?.agent_id || prev.agent_id || null,
       public_key: payload?.public_key || prev.public_key || null,
       signature: payload?.signature || prev.signature || null,
+      supported_task_types: supportedTaskTypes && supportedTaskTypes.length ? supportedTaskTypes : (prev.supported_task_types || null),
       agent_verified: prev.agent_verified ?? null,
       trust_level: prev.trust_level || null,
       last_verified_at: prev.last_verified_at || null

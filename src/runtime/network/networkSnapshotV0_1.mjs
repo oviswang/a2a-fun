@@ -234,6 +234,7 @@ export async function getNetworkSnapshot({
         freshness: active ? 'ACTIVE' : 'STALE',
         version: x?.version || null,
         agent_id: x?.agent_id || null,
+        supported_task_types: Array.isArray(x?.supported_task_types) ? x.supported_task_types : null,
         trust_level: x?.trust_level || null,
         last_verified_at: x?.last_verified_at || null,
         country_code: cc && /^[A-Z]{2}$/.test(cc) ? cc : null
