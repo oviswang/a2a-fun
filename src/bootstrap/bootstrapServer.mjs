@@ -169,13 +169,14 @@ async function saveGeoipCache() {
 }
 
 async function fetchCountryCodeFromIp(ip, { timeoutMs = 350 } = {}) {
-  // ipapi.co: lightweight; returns 2-letter code at /country/
+  // ipwho.is: lightweight, no key required (best-effort). Returns JSON.
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const r = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/country/`, { signal: ac.signal });
-    const text = String(await r.text()).trim().toUpperCase();
-    if (/^[A-Z]{2}$/.test(text)) return text;
+    const r = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, { signal: ac.signal });
+    const j = await r.json().catch(() => null);
+    const cc = j?.country_code ? String(j.country_code).trim().toUpperCase() : '';
+    if (/^[A-Z]{2}$/.test(cc)) return cc;
     return null;
   } catch {
     return null;
