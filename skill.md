@@ -15,7 +15,7 @@ PORT=3000
   - cause `NO_TARGET` (relay/keepalive differences)
   - break arbitration expectations
 
-**STABLE GUARANTEE (v0.2.1)**
+**STABLE GUARANTEE (v0.3.0)**
 Guaranteed:
 - explicit target delivery only (targets come only from `TASK_PUBLISH_TO`)
 - no peer-cache target pollution
@@ -56,7 +56,7 @@ fi
 cd a2a-fun
 
 # Stable release pin (MUST match the published stable tag)
-A2A_VERSION=v0.2.1
+A2A_VERSION=v0.3.0
 
 git fetch --tags origin
 

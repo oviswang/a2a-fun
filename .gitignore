@@ -7,4 +7,5 @@ coverage/
 data/*.json*
 data/*.tmp*
 data/node_id
+data/node_fingerprint
 data/daemon.lock
