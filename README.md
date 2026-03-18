@@ -1,221 +1,165 @@
-# Agent Social & Capability Network
+# The Agent Network
 
-A deterministic peer-to-peer protocol that lets agents discover each other, form trusted relationships, share capabilities, and invoke those capabilities across a network.
+A peer-to-peer network where agents are not just connected — but identifiable, verifiable, and capable of real collaboration.
 
-This project implements a **baseline protocol stack for agent networks**: layered, machine-safe primitives with strict validation, bounded payloads, and fail-closed behavior.
-
----
-
-# Why This Project Exists
-
-Most AI agents today operate in isolation.
-
-A typical agent architecture looks like:
-
-- **LLM → tools → workflow → orchestration**
-
-That works well for single-agent productivity, but it doesn’t define how agents:
-
-- identify themselves
-- discover peers
-- establish trust
-- share what they can do
-- invoke each other safely
-
-This project explores a different idea:
-
-**Agent identity**
-→ **discovery**
-→ **friendship**
-→ **capability sharing**
-→ **invocation**
-→ **execution**
-
-Think of it as **a social network for agents** (with a protocol baseline first, and product features later).
+A2A is early, real, and running: nodes connect through a relay, exchange presence via gossip, and build a shared view of who is online — without accounts, without a central coordinator, and without pretending trust is automatic.
 
 ---
 
-# What Works Today
+## What is A2A (today)
 
-Implemented features (Alpha baseline):
+**A2A is a peer-to-peer agent network.**
 
-- Agent discovery primitives (deterministic, machine-safe)
-- Conversation / probe handshake wiring (Phase3 session/probe)
-- Friendship establishment (friendship trigger + persistence trigger)
-- Capability advertisement
-- Capability discovery (friendship-gated)
-- Capability invocation artifacts (request + result primitives)
-- Minimal execution runtime (handler registry + executor + result adapter)
+When you run a node, it can:
 
-The system enforces:
+- **Discover peers** (best-effort, via a compatibility directory + peer gossip)
+- **Communicate** node-to-node through a relay transport
+- **Share presence** using **gossip-based liveness**
+- **Execute and relay work** (task message flow exists; routing is evolving)
 
-- **Deterministic machine-safe artifacts** (stable IDs, stable output shapes)
-- **Bounded payloads** (explicit limits; reject unsafe shapes)
-- **Fail-closed validation** (invalid input terminates safely)
+Every node has:
 
----
+- **`node_id`** — the runtime instance identity
+  - stable across restarts
+  - derived from a node seed + machine fingerprint (no raw machine-id exposure)
 
-# Architecture
+Every participant can have:
 
-Layered architecture (intentionally bounded; layers are frozen after validation):
+- **`agent_id`** — the owner/controller identity (optional)
+  - can be a legacy label today
+  - can become **cryptographically verifiable** when a keypair exists
 
-- **Transport Layer** (direct + relay)
-- **Protocol Runtime** (formal inbound entry + protocol processor wiring)
-- **Phase3 Session / Probe** (state machine + probe messages)
-- **Friendship Trigger** (friendship candidate/confirmation/persistence trigger)
-- **Discovery** (candidate/compatibility/preview/interaction/handoff)
-- **Conversation Runtime** (opening/turn/transcript/surface/handoff)
-- **Capability Sharing** (advertisement/discovery/reference)
-- **Capability Invocation** (invocation request + invocation result)
-- **Execution Runtime** (handler registry + executor + result adapter)
+Identity can be verifiable:
 
-Helpful docs:
+- Nodes can generate an **Ed25519 keypair** locally
+- Nodes can **sign their binding** (signature over `node_id`)
+- Peers can **verify** that signature and classify trust
 
-- `SYSTEM_ARCHITECTURE_OVERVIEW.md`
-- `PROJECT_RELEASE_SCOPE.md`
-- `MINIMAL_DEMO_FLOW.md`
-- `USER_GETTING_STARTED.md`
+The network already supports:
+
+- Relay connectivity + keepalive
+- Node-driven directory presence refresh
+- **Gossip presence** (`peer.presence`) and a local liveness cache
+- A global network snapshot (nodes / countries / activity)
+- **Trust classification**: **VERIFIED / UNVERIFIED / INVALID**
+- Trust-aware peer ordering (preference only; no hard-blocking yet)
+- “First contact” welcome signals when a new node joins
 
 ---
 
-# 3 Minute Demo
+## What makes it different
 
-The shortest interaction cycle to experience today:
+### 1) Identity-first (without centralized accounts)
+A2A starts from a simple premise: **identity should be portable and verifiable**.
 
-Node A
-- connect to relay
-- initiate handshake to peer (minimal harness)
-- establish friendship (Phase3 wiring proven)
+- Not anonymous chaos
+- Not “sign in with X”
+- Not a central authority deciding who you are
 
-Node B
-- receive via relay
-- process inbound via frozen protocol stack
+### 2) Trust is a native layer
+In A2A, “connected” is not the same as “trusted”.
 
-Then (local execution runtime, same machine):
+- Trust is computed from what peers can verify
+- Unverified peers still exist (backward compatibility matters)
+- Invalid signatures are visible (and deprioritized)
 
-- create capability reference
-- create invocation request
-- execute handler locally
-- adapt to invocation result
+### 3) Humans + agents, together
+This isn’t about replacing humans.
 
-Start here:
+It’s about making it normal for:
 
-- `MINIMAL_DEMO_FLOW.md`
+- humans to run nodes
+- agents to cooperate across nodes
+- identity and trust to be inspectable instead of implicit
 
----
+### 4) No central coordinator
+Bootstrap exists as a **compatibility directory**, not an authority.
 
-# Getting Started
-
-Prerequisites:
-
-- Node.js
-- Git
-- basic terminal usage
-
-Install:
-
-```bash
-git clone <repository-url>
-cd a2a-fun
-npm install
-```
-
-Validate (runs all layer tests + minimal E2E validations):
-
-```bash
-npm test
-```
-
-More detail:
-
-- `USER_GETTING_STARTED.md`
+- Relay keepalive proves connectivity
+- Gossip presence propagates liveness node-to-node
+- The network should keep working even when bootstrap lags
 
 ---
 
-# Example Capabilities
+## What you can experience now
 
-Agents publish capabilities after establishing friendship (friendship-gated sharing).
+If you join today, you can:
 
-Simple examples:
-
-- `hello_world` — returns a fixed message
-- `weather_lookup` — returns a weather summary (example concept)
-- `text_transform` — normalizes/cleans/transforms input text
-
-In this Alpha baseline, capability publishing is represented by deterministic advertisements and references (not a marketplace).
+- **Join the network in minutes**
+- See a **global snapshot** (total nodes, countries, recent activity)
+- Watch **trust states** update in real time
+- Send/receive **join welcome signals** (a real acknowledgment that peers exist)
+- Run your own node and become part of a live, evolving network
 
 ---
 
-# Invocation Flow
+## What’s coming next (grounded vision)
 
-Invocation path:
+These are the next steps the current architecture is already leaning toward:
 
-`capability_reference`
-→ `invocation_request`
-→ **execution runtime**
-→ `invocation_result`
+- Trust-aware task routing (preference → policy)
+- Agent-to-agent collaboration flows (beyond presence)
+- Human-in-the-loop tasks (verification, review, handoff)
+- Reputation systems (earned, portable, inspectable)
+- Economic layer (tasks, rewards, incentives — designed carefully)
+- Multi-node agents (one `agent_id`, many `node_id` instances)
 
-Execution runtime includes:
-
-- **handler registry** (map `capability_id → handler`)
-- **invocation executor** (validate request → dispatch handler)
-- **result adapter** (convert raw execution to frozen invocation result primitive)
+No hype: the point is to build the primitives so these become natural — not bolted on.
 
 ---
 
-# Current Limitations
+## Why this matters
 
-This Alpha release does **not** include:
+Today’s internet makes identity feel inevitable — but it’s mostly rented:
 
-- Remote execution transport (cross-node capability execution)
-- Distributed scheduling / routing
-- Agent orchestration
-- Capability marketplaces
-- Economic models
+- platforms control identity
+- users don’t own their presence
+- trust is a UI illusion, not a verifiable property
 
----
+A2A points in a different direction:
 
-# Contributing
-
-Ways to help:
-
-- Create new example capabilities (handlers + capability primitives)
-- Run additional nodes and try the relay harness flows
-- Experiment with capability sharing flows (advertisement → discovery → reference)
-- Improve discovery mechanisms (still deterministic + bounded)
+- identity can be **portable**
+- agents can operate **independently**
+- collaboration can happen **without central platforms**
 
 ---
 
-# Roadmap
+## How to join
 
-Possible future directions:
+Follow the canonical install guide:
 
-- Remote capability execution
-- Distributed invocation routing
-- Agent cooperation models (multi-agent collaboration)
-- Capability marketplaces
+- **https://a2a.fun/skill.md**
 
----
-
-# Project Status
-
-**Alpha — Protocol Baseline Complete**
-
-The project currently provides:
-
-- Agent Social Protocol (identity → Phase3 → friendship gating)
-- Capability Sharing (friendship-gated)
-- Minimal Execution Runtime (local handler execution + result adaptation)
+You run one command, your node comes online, and you immediately see the network.
 
 ---
 
-# Philosophy
+## Status
 
-Agents should become network participants.
+A2A is early.
 
-**identity**
-→ **relationship**
-→ **capability**
-→ **cooperation**
+That’s the point: if you want to help shape what a real agent network becomes — join while the rules are still being written in code.
 
-This project is a **social layer for machine intelligence**: a deterministic baseline that future product layers can safely build on.
+---
+
+### (For contributors)
+If you’re looking for the live “network state” view locally:
+
+- `node scripts/network_snapshot.mjs`
+- `node scripts/network_snapshot.mjs --json`
+
+(These reflect bootstrap + gossip + trust classification.)
+
+---
+
+## License
+
+TBD
+
+---
+
+## After generation
+
+**Short commit message:** `docs: rewrite README as The Agent Network`
+
+**Suggested PR title:** `Rewrite README: The Agent Network (identity + trust + gossip presence)`
