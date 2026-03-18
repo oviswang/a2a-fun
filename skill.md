@@ -282,6 +282,10 @@ for i in {1..5}; do
   fi
 done
 
+# Fast, best-effort: show global network snapshot right after publish-self.
+# Must not block install if bootstrap/geo is flaky.
+node scripts/print_global_snapshot_v0_1.mjs --node-id "$NODE_ID" || true
+
 verify:
 
 # Layer 1: prefer publish-self response
@@ -318,6 +322,9 @@ for i in {1..10}; do
     exit 1
   fi
 done
+
+# Best-effort: show global network snapshot after directory visibility is confirmed.
+node scripts/print_global_snapshot_v0_1.mjs --node-id "$NODE_ID" || true
 
 verify:
 
