@@ -4,6 +4,7 @@ import os from 'node:os';
 import * as officialCapabilities from '../../../examples/capabilities/index.mjs';
 import { listCapabilities } from '../../capability/capabilityDiscoveryList.mjs';
 import { getNodeStatus } from '../status/nodeStatus.mjs';
+import { getNetworkSnapshot } from '../network/networkSnapshotV0_1.mjs';
 
 import { createNetworkAgentDirectory, publishAgentCard, listPublishedAgents, searchPublishedAgents } from '../../discovery/networkAgentDirectory.mjs';
 import { createNetworkAgentDirectoryEntry } from '../../discovery/networkAgentDirectoryEntry.mjs';
@@ -46,6 +47,14 @@ export function createHttpTransport() {
               capabilities: out.capabilities
             })
           );
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/__a2a__/network_snapshot') {
+          const snap = await getNetworkSnapshot({}).catch((e) => ({ ok: false, error: String(e?.message || e) }));
+          res.statusCode = snap && snap.ok ? 200 : 503;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(snap));
           return;
         }
 
