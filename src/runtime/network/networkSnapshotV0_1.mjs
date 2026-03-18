@@ -236,6 +236,8 @@ export async function getNetworkSnapshot({
         agent_id: x?.agent_id || null,
         supported_task_types: Array.isArray(x?.supported_task_types) ? x.supported_task_types : null,
         trust_level: x?.trust_level || null,
+        trust_state: x?.trust_state || x?.trust_level || null,
+        trust_score: typeof x?.trust_score === 'number' ? x.trust_score : null,
         last_verified_at: x?.last_verified_at || null,
         country_code: cc && /^[A-Z]{2}$/.test(cc) ? cc : null
       };
@@ -331,6 +333,31 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
     lines.push(`${flag} ${c.country || 'Unknown'}: ${c.count}`);
   }
 
+  // Network Health (VERIFIED / (VERIFIED + INVALID))
+  try {
+    const gpAll = Array.isArray(s.gossip_peers) ? s.gossip_peers : [];
+    let v = 0, u = 0, i = 0, q = 0;
+    for (const p of gpAll) {
+      const st = String(p?.trust_state || p?.trust_level || 'UNVERIFIED');
+      if (st === 'VERIFIED') v++;
+      else if (st === 'QUARANTINED') q++;
+      else if (st === 'INVALID') i++;
+      else u++;
+    }
+    const denom = v + i + q;
+    const health = denom > 0 ? v / denom : 1;
+    const pct = Math.round(health * 100);
+    const badge = pct >= 80 ? '🟢 Healthy' : pct >= 50 ? '🟡 Mixed' : '🔴 Degraded';
+
+    lines.push('');
+    lines.push('--------------------------------');
+    lines.push('Network Health');
+    lines.push('--------------------------------');
+    lines.push(`Network Health: ${pct}% ${badge}`);
+    lines.push(`(VERIFIED: ${v}, UNVERIFIED: ${u}, INVALID: ${i}, QUARANTINED: ${q})`);
+    lines.push(`peer_count: ${gpAll.length}`);
+  } catch {}
+
   lines.push('');
   lines.push('🟢 Active peers:');
   const act = Array.isArray(s.active_peers) ? s.active_peers : [];
@@ -346,20 +373,25 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
   lines.push('');
   const gp = Array.isArray(s.gossip_peers) ? s.gossip_peers : [];
 
-  const trustScore = (t) => (t === 'VERIFIED' ? 2 : t === 'INVALID' ? 0 : 1);
+  const trustScore = (s2) => (s2 === 'VERIFIED' ? 2 : s2 === 'UNVERIFIED' || !s2 ? 1 : s2 === 'INVALID' ? 0 : s2 === 'QUARANTINED' ? -1 : 1);
   const fmtPeerLine = (p, { hint = null } = {}) => {
     const sec = typeof p.age_ms === 'number' ? Math.round(p.age_ms / 1000) : null;
     const ag = p.agent_id ? String(p.agent_id) : null;
+    const st = String(p.trust_state || p.trust_level || 'UNVERIFIED');
+    const score = typeof p.trust_score === 'number' ? p.trust_score : trustScore(st);
     const bits = [`- ${p.node_id}`, `${sec ?? '?'}s ago`];
     if (ag) bits.push(ag);
     if (hint) bits.push(hint);
-    bits.push(`trust_score: ${trustScore(p.trust_level)}`);
+    bits.push(`trust_score: ${score}`);
     return bits.join(' — ');
   };
 
-  const verifiedPeers = gp.filter((p) => p.trust_level === 'VERIFIED').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
-  const unverifiedPeers = gp.filter((p) => !p.trust_level || p.trust_level === 'UNVERIFIED').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
-  const invalidPeers = gp.filter((p) => p.trust_level === 'INVALID').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
+  const stateOf = (p) => String(p?.trust_state || p?.trust_level || 'UNVERIFIED');
+
+  const verifiedPeers = gp.filter((p) => stateOf(p) === 'VERIFIED').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
+  const unverifiedPeers = gp.filter((p) => stateOf(p) === 'UNVERIFIED').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
+  const invalidPeers = gp.filter((p) => stateOf(p) === 'INVALID').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
+  const quarantinedPeers = gp.filter((p) => stateOf(p) === 'QUARANTINED').sort((a, b) => (a.age_ms ?? 1e18) - (b.age_ms ?? 1e18));
 
   lines.push('🟢 VERIFIED (trusted)');
   if (!verifiedPeers.length) lines.push('- (none)');
@@ -374,6 +406,11 @@ export function formatNetworkSnapshotHuman(snapshot, { topCountries = 6, maxActi
   lines.push('🔴 INVALID (suspicious)');
   if (!invalidPeers.length) lines.push('- (none)');
   else for (const p of invalidPeers.slice(0, 8)) lines.push(fmtPeerLine(p, { hint: 'signature mismatch' }));
+
+  lines.push('');
+  lines.push('🟣 QUARANTINED (avoid)');
+  if (!quarantinedPeers.length) lines.push('- (none)');
+  else for (const p of quarantinedPeers.slice(0, 8)) lines.push(fmtPeerLine(p, { hint: 'quarantined' }));
 
   lines.push('');
   lines.push('👋 Welcome signals:');

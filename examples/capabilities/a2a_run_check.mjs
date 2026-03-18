@@ -43,7 +43,7 @@ export async function a2a_run_check(input) {
     if (j && typeof j === 'object' && j.peers && typeof j.peers === 'object') capabilityCache = j;
   } catch {}
 
-  const trustScore = (t) => (t === 'VERIFIED' ? 2 : t === 'INVALID' ? 0 : 1);
+  const trustScore = (t) => (t === 'VERIFIED' ? 2 : t === 'UNVERIFIED' || !t ? 1 : t === 'INVALID' ? 0 : t === 'QUARANTINED' ? -1 : 1);
   const supportsTask = (p) => {
     const nodeId = String(p?.node_id || '').trim();
     const arr = Array.isArray(p?.supported_task_types)
@@ -64,6 +64,7 @@ export async function a2a_run_check(input) {
         // bootstrap_peers use node_id; active_peers use node_id
         node_id: String(p?.node_id || '').trim(),
         trust_level: p?.trust_level || 'UNVERIFIED',
+        trust_state: p?.trust_state || p?.trust_level || 'UNVERIFIED',
         age_ms: typeof p?.age_ms === 'number' ? p.age_ms : null,
         capability_match: supportsTask(p) // true | false | null(unknown)
       }))
@@ -72,11 +73,16 @@ export async function a2a_run_check(input) {
     log('MATCH_CANDIDATES', { task_type, candidates });
 
     const explicitlySupported = candidates.filter((c) => c.capability_match === true);
-    const pool = explicitlySupported.length ? explicitlySupported : candidates;
+    const pool0 = explicitlySupported.length ? explicitlySupported : candidates;
+
+    // Exclude INVALID/QUARANTINED if any better peers exist (governance hardening)
+    const betterExists = pool0.some((c) => trustScore(c.trust_state) >= 1);
+    const pool = betterExists ? pool0.filter((c) => trustScore(c.trust_state) >= 1) : pool0;
+    const excluded_invalid = betterExists ? (pool0.length - pool.length) : 0;
 
     pool.sort((a, b) => {
-      const ta = trustScore(a.trust_level);
-      const tb = trustScore(b.trust_level);
+      const ta = trustScore(a.trust_state);
+      const tb = trustScore(b.trust_state);
       if (ta !== tb) return tb - ta; // higher first
       const aa = a.age_ms ?? 1e18;
       const ab = b.age_ms ?? 1e18;
@@ -89,7 +95,8 @@ export async function a2a_run_check(input) {
     log('MATCH_SELECTED', {
       task_type,
       chosen: target,
-      reason: explicitlySupported.length ? 'trust+capability match' : 'trust-aware fallback'
+      reason: explicitlySupported.length ? 'capability+trust+freshness' : 'trust+freshness fallback',
+      excluded_invalid
     });
   }
   if (!target) return { ok: false, error: { code: 'NO_TARGET_PEER' } };

@@ -74,7 +74,7 @@ PORT=3000
   - prefer verified peers when available
   - time out safely when a peer does not respond
 
-**STABLE GUARANTEE (v0.3.0)**
+**STABLE GUARANTEE (v0.3.1)**
 Guaranteed:
 - stable node startup (daemon mode)
 - relay registration + keepalive readiness signals in logs:
@@ -126,7 +126,7 @@ fi
 cd a2a-fun
 
 # Stable release pin (MUST match the published stable tag)
-A2A_VERSION=v0.3.0
+A2A_VERSION=v0.3.1
 
 git fetch --tags origin
 

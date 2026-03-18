@@ -389,6 +389,8 @@ export async function startNodeNetworkIntegrationV0_1({
   const presenceCachePath = path.join(workspacePath(), 'data', 'presence-cache.json');
   let presenceGossipTimer = null;
   let presenceCache = { ok: true, protocol: 'a2a/0.1', updated_at: null, peers: {} };
+  let networkHealthClass = null; // HEALTHY|MIXED|DEGRADED (best-effort, log-only)
+
   try {
     const loaded = await readJsonFileSafe(presenceCachePath);
     if (loaded && typeof loaded === 'object' && loaded.peers && typeof loaded.peers === 'object') presenceCache = loaded;
@@ -451,39 +453,63 @@ export async function startNodeNetworkIntegrationV0_1({
 
     log('JOIN_ANNOUNCE_SENT', { node_id, peer_count: ordered.length, ok_count: okCount, ts: payload.ts });
   };
-  const trustRank = (peer_id) => {
-    const t = presenceCache?.peers?.[peer_id]?.trust_level || null;
-    if (t === 'VERIFIED') return 0;
-    if (t === 'UNVERIFIED' || !t) return 1;
-    if (t === 'INVALID') return 2;
+  const trustScoreFromState = (s) => {
+    if (s === 'VERIFIED') return 2;
+    if (s === 'UNVERIFIED' || !s) return 1;
+    if (s === 'INVALID') return 0;
+    if (s === 'QUARANTINED') return -1;
     return 1;
+  };
+
+  const trustStateOf = (peer_id) => {
+    const p = presenceCache?.peers?.[peer_id] && typeof presenceCache.peers[peer_id] === 'object' ? presenceCache.peers[peer_id] : null;
+    return p?.trust_state || p?.trust_level || 'UNVERIFIED';
   };
 
   const trustAwareOrder = (targets = [], { reason = 'generic' } = {}) => {
     const arr = Array.isArray(targets) ? targets.filter(Boolean) : [];
+
     const verified = [];
     const unverified = [];
     const invalid = [];
+    const quarantined = [];
 
     for (const id of arr) {
-      const r = trustRank(id);
-      if (r === 0) verified.push(id);
-      else if (r === 2) invalid.push(id);
+      const s = trustStateOf(id);
+      if (s === 'VERIFIED') verified.push(id);
+      else if (s === 'QUARANTINED') quarantined.push(id);
+      else if (s === 'INVALID') invalid.push(id);
       else unverified.push(id);
     }
 
-    const ordered = [...verified, ...unverified, ...invalid];
+    const ordered = [...verified, ...unverified, ...invalid, ...quarantined];
+
+    // Hardening: INVALID/QUARANTINED are only used if no better peers exist.
+    const hasBetter = verified.length + unverified.length > 0;
+    const filtered_invalid = hasBetter ? invalid.length + quarantined.length : 0;
+    const orderedFiltered = hasBetter ? [...verified, ...unverified] : ordered;
+
+    log('TRUST_FILTER_APPLIED', {
+      node_id,
+      reason,
+      verified: verified.length,
+      unverified: unverified.length,
+      invalid: invalid.length,
+      quarantined: quarantined.length,
+      filtered_invalid
+    });
 
     log('TRUST_AWARE_SELECTION_APPLIED', {
       node_id,
       reason,
       verified_count: verified.length,
       unverified_count: unverified.length,
-      invalid_count: invalid.length
+      invalid_count: invalid.length,
+      quarantined_count: quarantined.length
     });
-    log('TRUST_AWARE_SELECTION_RESULT', { node_id, reason, chosen_peer_order: ordered.slice(0, 50) });
+    log('TRUST_AWARE_SELECTION_RESULT', { node_id, reason, chosen_peer_order: orderedFiltered.slice(0, 50) });
 
-    return ordered;
+    return orderedFiltered;
   };
 
   const buildGossipPeers = () => {
@@ -571,6 +597,11 @@ export async function startNodeNetworkIntegrationV0_1({
       supported_task_types: supportedTaskTypes && supportedTaskTypes.length ? supportedTaskTypes : (prev.supported_task_types || null),
       agent_verified: prev.agent_verified ?? null,
       trust_level: prev.trust_level || null,
+      trust_state: prev.trust_state || null,
+      trust_score: typeof prev.trust_score === 'number' ? prev.trust_score : null,
+      invalid_seen_count: typeof prev.invalid_seen_count === 'number' ? prev.invalid_seen_count : 0,
+      invalid_streak: typeof prev.invalid_streak === 'number' ? prev.invalid_streak : 0,
+      last_invalid_at: prev.last_invalid_at || null,
       last_verified_at: prev.last_verified_at || null
     };
 
@@ -606,6 +637,35 @@ export async function startNodeNetworkIntegrationV0_1({
       if (!next.trust_level) next.trust_level = prev.trust_level || 'UNVERIFIED';
     }
 
+    // Trust state + quarantine (light isolation; no full bans)
+    // - trust_state starts as trust_level
+    // - repeated INVALID can promote to QUARANTINED
+    try {
+      const tl = String(next.trust_level || 'UNVERIFIED');
+      next.trust_state = tl;
+
+      if (tl === 'VERIFIED') {
+        next.invalid_streak = 0;
+        next.invalid_seen_count = 0;
+        next.last_invalid_at = null;
+      } else if (tl === 'INVALID') {
+        next.invalid_seen_count = (Number(next.invalid_seen_count) || 0) + 1;
+        next.invalid_streak = (Number(next.invalid_streak) || 0) + 1;
+        next.last_invalid_at = nowIso();
+
+        // Promote to QUARANTINED after multiple persistent invalid sightings
+        if (next.invalid_streak >= 3 || next.invalid_seen_count >= 5) {
+          next.trust_state = 'QUARANTINED';
+        }
+      } else {
+        // UNVERIFIED (or unknown)
+        next.invalid_streak = 0;
+      }
+
+      // Normalized trust score
+      next.trust_score = next.trust_state === 'VERIFIED' ? 2 : next.trust_state === 'UNVERIFIED' ? 1 : next.trust_state === 'INVALID' ? 0 : next.trust_state === 'QUARANTINED' ? -1 : 1;
+    } catch {}
+
     presenceCache.peers = presenceCache.peers && typeof presenceCache.peers === 'object' ? presenceCache.peers : {};
     presenceCache.peers[peer_id] = next;
     presenceCache.updated_at = nowIso();
@@ -614,6 +674,29 @@ export async function startNodeNetworkIntegrationV0_1({
     const freshness = ageMs <= presenceActiveWindowMs ? 'ACTIVE' : 'STALE';
 
     log('PEER_PRESENCE_UPDATED', { node_id, peer_id, ts: seenIso, freshness, age_ms: ageMs });
+
+    // Self-healing visibility: network health state (log-only)
+    try {
+      let v = 0;
+      let inv = 0;
+      for (const [pid, p] of Object.entries(presenceCache.peers || {})) {
+        if (!p || typeof p !== 'object') continue;
+        const ts2 = String(p.last_presence_ts || '').trim();
+        const age2 = ts2 ? Date.now() - Date.parse(ts2) : 1e18;
+        if (!(Number.isFinite(age2) && age2 <= presenceActiveWindowMs)) continue;
+        const st = String(p.trust_state || p.trust_level || 'UNVERIFIED');
+        if (st === 'VERIFIED') v++;
+        else if (st === 'INVALID' || st === 'QUARANTINED') inv++;
+      }
+      const denom = v + inv;
+      const health = denom > 0 ? v / denom : 1;
+      const cls = health >= 0.8 ? 'HEALTHY' : health >= 0.5 ? 'MIXED' : 'DEGRADED';
+      if (networkHealthClass && networkHealthClass !== cls) {
+        if (cls === 'DEGRADED') log('NETWORK_DEGRADED', { node_id, health_score: health, verified: v, invalid: inv });
+        if (networkHealthClass === 'DEGRADED' && cls !== 'DEGRADED') log('NETWORK_RECOVERING', { node_id, health_score: health, verified: v, invalid: inv });
+      }
+      networkHealthClass = cls;
+    } catch {}
 
     void writeJsonAtomic(presenceCachePath, presenceCache).catch(() => {});
   };
