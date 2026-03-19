@@ -1,3 +1,5 @@
+import { selectCandidateReputationAware } from '../routing/reputationAwareRouting.mjs';
+
 function safeStr(s) {
   return typeof s === 'string' ? s.trim() : '';
 }
@@ -49,21 +51,19 @@ export function selectRelevantPeer({ snapshot, local_memory, candidates } = {}) 
     };
   }
 
-  // 4) shared-directory candidates with topic overlap (best-effort)
+  // 4) shared-directory candidates routed via reputation-aware weighted selection
   const cand = Array.isArray(candidates) ? candidates : [];
-  const scoredCand = cand
-    .map((c) => ({ c, score: containsAny(`${c?.name || ''} ${c?.summary || ''} ${Array.isArray(c?.skills) ? c.skills.join(' ') : ''}`, topics) ? 2 : 0 }))
-    .sort((a, b) => b.score - a.score);
-
-  const topC = scoredCand.find((x) => x.score > 0) || null;
-  if (topC) {
-    return {
-      ok: true,
-      selected_peer_agent_id: topC.c?.agent_id || null,
-      reason: 'shared_directory_topic_overlap',
-      score: topC.score,
-      evidence: { topics }
-    };
+  if (cand.length > 0) {
+    const routed = selectCandidateReputationAware({ candidates: cand, topics });
+    if (routed.ok && routed.selected?.agent_id) {
+      return {
+        ok: true,
+        selected_peer_agent_id: routed.selected.agent_id,
+        reason: `routing:${routed.reason}`,
+        score: null,
+        evidence: { topics, routing: routed }
+      };
+    }
   }
 
   return { ok: false, error: { code: 'NO_RELEVANT_PEER' } };
