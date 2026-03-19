@@ -241,7 +241,21 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
           const want = String(man?.skill_md_hash || '').trim();
           if (want && got === want) {
             log('SKILL_MD_HASH_MATCH', { node_id: node_id || null });
-            targetRes = { ok: true, version: v };
+
+            // version compatibility gate (optional)
+            const minReq = String(man?.min_required_version || '').trim();
+            if (minReq && local_v) {
+              const mv = parseSemver(minReq);
+              const lv2 = parseSemver(local_v);
+              if (mv && lv2 && cmp(lv2, mv) < 0) {
+                log('MIN_REQUIRED_VERSION_NOT_MET', { node_id: node_id || null, min_required_version: minReq, local_version: local_v });
+                targetRes = { ok: false, error: { code: 'MIN_REQUIRED_VERSION_NOT_MET', min_required_version: minReq } };
+              } else {
+                targetRes = { ok: true, version: v };
+              }
+            } else {
+              targetRes = { ok: true, version: v };
+            }
           } else {
             log('SKILL_MD_HASH_MISMATCH', { node_id: node_id || null, want: want || null, got });
             // Block upgrade when hash mismatches
