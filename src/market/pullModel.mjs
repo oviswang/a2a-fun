@@ -1,0 +1,196 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { appendOfferFeedEvent, rebuildMarketMetrics } from './offerFeed.mjs';
+import { shouldAcceptOffer } from './offerDecision.mjs';
+import { emitValueForTaskSuccess } from '../value/value.mjs';
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function num(x, dflt) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : dflt;
+}
+
+/**
+ * Discover recent offers from offer_feed.jsonl.
+ * Returns latest state per offer_id.
+ */
+export function discoverRecentOffers({ limit = 50, minExpectedValue = null, includeExecuted = false, dataDir } = {}) {
+  // rebuildMarketMetrics is safe and ensures metrics file exists (optional)
+  try {
+    rebuildMarketMetrics({ dataDir });
+  } catch {}
+
+  // Read tail via offerFeed rebuild helper internals: just re-read feed in a bounded way
+  // (duplicated lightweight tail here to keep this module self-contained).
+  const dir = dataDir || path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'data');
+  const feedPath = path.join(dir, 'offer_feed.jsonl');
+
+  let lines = [];
+  try {
+    const s = fs.readFileSync(feedPath, 'utf8');
+    lines = s.split('\n').filter(Boolean).slice(-5000);
+  } catch {
+    lines = [];
+  }
+
+  const byOffer = new Map();
+  const executed = new Set();
+
+  for (const line of lines) {
+    let e;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!e.offer_id) continue;
+
+    if (e.event_type === 'offer_executed') executed.add(e.offer_id);
+
+    const prev = byOffer.get(e.offer_id);
+    if (!prev || String(e.ts) > String(prev.ts)) byOffer.set(e.offer_id, e);
+  }
+
+  let offers = [...byOffer.values()].map((e) => ({
+    offer_id: e.offer_id,
+    task_type: e.task_type,
+    expected_value: e.expected_value ?? 1,
+    source_super_identity_id: e.source_super_identity_id || null,
+    latest_event_type: e.event_type,
+    latest_ts: e.ts,
+    reason: e.reason || null,
+    executed: executed.has(e.offer_id)
+  }));
+
+  if (!includeExecuted) offers = offers.filter((o) => !o.executed);
+  if (minExpectedValue !== null) offers = offers.filter((o) => num(o.expected_value, 1) >= num(minExpectedValue, 0));
+
+  offers.sort((a, b) => String(b.latest_ts).localeCompare(String(a.latest_ts)));
+  offers = offers.slice(0, Math.max(1, num(limit, 50)));
+
+  try {
+    process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_DISCOVERED', ts: nowIso(), count: offers.length })}\n`);
+  } catch {}
+
+  return { ok: true, offers, feedPath };
+}
+
+export function emitInterestSignal({ offer_id, node_id, super_identity_id, dataDir } = {}) {
+  const out = appendOfferFeedEvent(
+    {
+      offer_id,
+      event_type: 'offer_interest',
+      target_node_id: node_id || null,
+      target_super_identity_id: super_identity_id || null,
+      metadata: {}
+    },
+    { dataDir }
+  );
+
+  try {
+    process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_INTEREST', ts: nowIso(), offer_id, node_id, super_identity_id })}\n`);
+  } catch {}
+
+  return out;
+}
+
+/**
+ * attemptPickupOffers()
+ * - discovers offers
+ * - filters viable
+ * - tries accept + execute (max attempts per cycle)
+ */
+export async function attemptPickupOffers({
+  node_id,
+  node_super_identity_id,
+  maxAttemptsPerCycle = 3,
+  minExpectedValue = null,
+  dataDir
+} = {}) {
+  const disc = await discoverRecentOffers({ limit: 200, minExpectedValue, includeExecuted: false, dataDir });
+  if (!disc.ok) return disc;
+
+  const offers = disc.offers;
+  const max = Math.max(1, num(maxAttemptsPerCycle, 3));
+
+  let tried = 0;
+  for (const o of offers) {
+    if (tried >= max) break;
+    tried++;
+
+    try {
+      process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_PICKUP_ATTEMPT', ts: nowIso(), offer_id: o.offer_id, expected_value: o.expected_value })}\n`);
+    } catch {}
+
+    // Optional interest signal
+    emitInterestSignal({ offer_id: o.offer_id, node_id, super_identity_id: node_super_identity_id, dataDir });
+
+    // Duplicate safety: skip if executed already (double-check)
+    if (o.executed) {
+      try {
+        process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_PICKUP_SKIPPED', ts: nowIso(), offer_id: o.offer_id, reason: 'already_executed' })}\n`);
+      } catch {}
+      continue;
+    }
+
+    // Adapt offer to decision function
+    const offer = {
+      offer_id: o.offer_id,
+      task_type: o.task_type,
+      expected_value: o.expected_value
+    };
+
+    const decision = shouldAcceptOffer(offer, { node_id, dataDir, reputation_score: 0 });
+    if (!decision.accepted) {
+      try {
+        process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_PICKUP_SKIPPED', ts: nowIso(), offer_id: o.offer_id, reason: decision.reason })}\n`);
+      } catch {}
+      continue;
+    }
+
+    // Execute (minimal): record offer_executed + value to publisher.
+    const targetSid = o.source_super_identity_id;
+    if (typeof targetSid === 'string' && targetSid.startsWith('sid-')) {
+      emitValueForTaskSuccess({
+        super_identity_id: targetSid,
+        context: { source_sid: 'system', expected_value: o.expected_value, offer_id: o.offer_id, task_type: o.task_type },
+        dataDir
+      });
+    }
+
+    appendOfferFeedEvent(
+      {
+        offer_id: o.offer_id,
+        event_type: 'offer_executed',
+        task_type: o.task_type,
+        expected_value: o.expected_value,
+        source_super_identity_id: o.source_super_identity_id,
+        target_node_id: node_id || null,
+        target_super_identity_id: node_super_identity_id || null,
+        metadata: { pickup: true }
+      },
+      { dataDir }
+    );
+
+    try {
+      process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_PICKUP_SUCCESS', ts: nowIso(), offer_id: o.offer_id })}\n`);
+    } catch {}
+
+    return { ok: true, picked: true, offer_id: o.offer_id };
+  }
+
+  return { ok: true, picked: false, tried };
+}
+
+export async function pollPickupLoop({ intervalMs = 15000, signal, ...params } = {}) {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  while (!signal?.aborted) {
+    await attemptPickupOffers(params);
+    await wait(num(intervalMs, 15000));
+  }
+  return { ok: true, stopped: true };
+}
