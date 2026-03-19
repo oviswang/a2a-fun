@@ -335,7 +335,7 @@ export async function attemptPickupOffers({
               task_id: o.task_type,
               value_event_id: valueOut?.event?.event_id || null,
               source_super_identity_id: targetSid,
-              metadata: { pickup: true }
+              metadata: { pickup: true, channel: 'pull' }
             }
           },
           { dataDir }
