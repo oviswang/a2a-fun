@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { appendOfferFeedEvent, rebuildMarketMetrics } from './offerFeed.mjs';
 import { shouldAcceptOffer } from './offerDecision.mjs';
+import { computeStrategyEffectiveExpectedValue } from './taskDecision.mjs';
 import { emitValueForTaskSuccess, getValue } from '../value/value.mjs';
 import { emitReputationEvent } from '../reputation/reputation.mjs';
 import { creditReward } from '../reward/reward.mjs';
@@ -137,6 +138,20 @@ export async function attemptPickupOffers({
   if (!disc.ok) return disc;
 
   const offers = disc.offers;
+
+  // Earnings-aware pickup strategy: try higher effective expected value first (task/channel preferences).
+  offers.sort((a, b) => {
+    const ea = computeStrategyEffectiveExpectedValue(
+      { expected_value: a.expected_value, task_type: a.task_type, channel: 'pull', node_super_identity_id },
+      { dataDir }
+    ).effective_expected_value;
+    const eb = computeStrategyEffectiveExpectedValue(
+      { expected_value: b.expected_value, task_type: b.task_type, channel: 'pull', node_super_identity_id },
+      { dataDir }
+    ).effective_expected_value;
+    return eb - ea;
+  });
+
   const max = Math.max(1, num(maxAttemptsPerCycle, 3));
 
   let tried = 0;
@@ -166,7 +181,7 @@ export async function attemptPickupOffers({
       expected_value: o.expected_value
     };
 
-    const decision = shouldAcceptOffer(offer, { node_id, dataDir, reputation_score: 0 });
+    const decision = shouldAcceptOffer(offer, { node_id, dataDir, reputation_score: 0, channel: 'pull', node_super_identity_id });
     if (!decision.accepted) {
       try {
         process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_PICKUP_SKIPPED', ts: nowIso(), offer_id: o.offer_id, reason: decision.reason })}\n`);

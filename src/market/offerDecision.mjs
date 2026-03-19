@@ -18,7 +18,10 @@ export function shouldAcceptOffer(offer, context = {}) {
   const decision = shouldAcceptTask(
     {
       expected_value: offer?.expected_value,
-      reputation_score: context?.reputation_score
+      reputation_score: context?.reputation_score,
+      task_type: task_type,
+      channel: context?.channel || 'pull',
+      node_super_identity_id: context?.node_super_identity_id || null
     },
     { node_id: context?.node_id, dataDir: context?.dataDir }
   );

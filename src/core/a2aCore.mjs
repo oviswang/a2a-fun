@@ -108,7 +108,16 @@ export async function a2aCoreHandleMessage(standardMsg) {
       ? (getReputation(context.super_identity_id)?.reputation?.score ?? 0)
       : 0;
 
-  const decision = shouldAcceptTask({ expected_value, reputation_score: requesterRep }, { node_id });
+  const decision = shouldAcceptTask(
+    {
+      expected_value,
+      reputation_score: requesterRep,
+      task_type: mapped.task,
+      channel: context.channel,
+      node_super_identity_id: process.env.A2A_NODE_SUPER_IDENTITY_ID || null
+    },
+    { node_id }
+  );
 
   // TASK_DECISION logging (explainable)
   try {
