@@ -51,8 +51,11 @@ async function main() {
 
   const release = {
     version,
-    git_tag: version,
+    channel: 'stable',
+    release_type: 'stable',
+    git_tag: `${version}-stable`,
     git_commit,
+    min_required_version: 'v0.5.0',
     skill_md_hash: skillHash,
     released_at: nowIso()
   };

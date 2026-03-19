@@ -48,6 +48,24 @@ a2a_run_check capability_summary
 - This file is the ONLY supported install path for user nodes.
 - Install MUST use a stable tag (not main).
 
+## Auto Upgrade Protocol (Signed Release Required)
+
+Node upgrade MUST follow:
+
+1) fetch release.json
+2) verify signature using embedded public key
+3) fetch skill.md
+4) verify SHA256(skill.md) == release.json.skill_md_hash
+5) check version compatibility (min_required_version)
+6) execute upgrade
+7) run self-check
+8) rollback on failure
+
+IMPORTANT:
+- skill.md is NOT a trust root
+- upgrade must abort if signature invalid
+- upgrade must abort if hash mismatch
+
 ## Defaults (stable)
 RELAY_URL=wss://gw.bothook.me/relay
 PORT=3000
@@ -79,7 +97,7 @@ fi
 
 cd a2a-fun
 
-A2A_VERSION=v0.3.3
+A2A_VERSION=v0.6.1-stable
 
 git fetch --tags origin
 
