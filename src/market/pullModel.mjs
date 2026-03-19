@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { appendOfferFeedEvent, rebuildMarketMetrics } from './offerFeed.mjs';
 import { shouldAcceptOffer } from './offerDecision.mjs';
-import { emitValueForTaskSuccess } from '../value/value.mjs';
+import { emitValueForTaskSuccess, getValue } from '../value/value.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -12,6 +12,36 @@ function nowIso() {
 function num(x, dflt) {
   const n = Number(x);
   return Number.isFinite(n) ? n : dflt;
+}
+
+function readFeedTail({ dataDir, maxLines = 8000 } = {}) {
+  const dir = dataDir || path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'data');
+  const feedPath = path.join(dir, 'offer_feed.jsonl');
+  let lines = [];
+  try {
+    const s = fs.readFileSync(feedPath, 'utf8');
+    lines = s.split('\n').filter(Boolean).slice(-maxLines);
+  } catch {
+    lines = [];
+  }
+  return { feedPath, lines };
+}
+
+function earliestExecutedEvent({ offer_id, dataDir } = {}) {
+  const { lines } = readFeedTail({ dataDir, maxLines: 12000 });
+  let best = null;
+  for (const line of lines) {
+    let e;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (e?.offer_id !== offer_id) continue;
+    if (e?.event_type !== 'offer_executed') continue;
+    if (!best || String(e.ts) < String(best.ts)) best = e;
+  }
+  return best;
 }
 
 /**
@@ -24,18 +54,7 @@ export function discoverRecentOffers({ limit = 50, minExpectedValue = null, incl
     rebuildMarketMetrics({ dataDir });
   } catch {}
 
-  // Read tail via offerFeed rebuild helper internals: just re-read feed in a bounded way
-  // (duplicated lightweight tail here to keep this module self-contained).
-  const dir = dataDir || path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'data');
-  const feedPath = path.join(dir, 'offer_feed.jsonl');
-
-  let lines = [];
-  try {
-    const s = fs.readFileSync(feedPath, 'utf8');
-    lines = s.split('\n').filter(Boolean).slice(-5000);
-  } catch {
-    lines = [];
-  }
+  const { feedPath, lines } = readFeedTail({ dataDir, maxLines: 5000 });
 
   const byOffer = new Map();
   const executed = new Set();
@@ -109,7 +128,8 @@ export async function attemptPickupOffers({
   node_super_identity_id,
   maxAttemptsPerCycle = 3,
   minExpectedValue = null,
-  dataDir
+  dataDir,
+  beforeFinalizeHook
 } = {}) {
   const disc = await discoverRecentOffers({ limit: 200, minExpectedValue, includeExecuted: false, dataDir });
   if (!disc.ok) return disc;
@@ -152,17 +172,55 @@ export async function attemptPickupOffers({
       continue;
     }
 
-    // Execute (minimal): record offer_executed + value to publisher.
-    const targetSid = o.source_super_identity_id;
-    if (typeof targetSid === 'string' && targetSid.startsWith('sid-')) {
-      emitValueForTaskSuccess({
-        super_identity_id: targetSid,
-        context: { source_sid: 'system', expected_value: o.expected_value, offer_id: o.offer_id, task_type: o.task_type },
-        dataDir
-      });
+    // Lightweight competition:
+    // 1) log execution attempt
+    appendOfferFeedEvent(
+      {
+        offer_id: o.offer_id,
+        event_type: 'offer_execution_attempt',
+        task_type: o.task_type,
+        expected_value: o.expected_value,
+        source_super_identity_id: o.source_super_identity_id,
+        target_node_id: node_id || null,
+        target_super_identity_id: node_super_identity_id || null,
+        metadata: { pickup: true }
+      },
+      { dataDir }
+    );
+    try {
+      process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_EXECUTION_ATTEMPT', ts: nowIso(), offer_id: o.offer_id, node_id })}\n`);
+    } catch {}
+
+    // 2) Win condition check BEFORE finalizing.
+    if (typeof beforeFinalizeHook === 'function') {
+      try {
+        await beforeFinalizeHook({ offer_id: o.offer_id });
+      } catch {}
+    }
+    const existing = earliestExecutedEvent({ offer_id: o.offer_id, dataDir });
+    if (existing) {
+      appendOfferFeedEvent(
+        {
+          offer_id: o.offer_id,
+          event_type: 'offer_execution_lost',
+          task_type: o.task_type,
+          expected_value: o.expected_value,
+          source_super_identity_id: o.source_super_identity_id,
+          target_node_id: node_id || null,
+          target_super_identity_id: node_super_identity_id || null,
+          reason: 'already_executed',
+          metadata: { winner_ts: existing.ts }
+        },
+        { dataDir }
+      );
+      try {
+        process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_EXECUTION_LOST', ts: nowIso(), offer_id: o.offer_id, reason: 'already_executed' })}\n`);
+      } catch {}
+      continue;
     }
 
-    appendOfferFeedEvent(
+    // 3) Append offer_executed (race-safe: multiple may append; earliest ts wins)
+    const execEv = appendOfferFeedEvent(
       {
         offer_id: o.offer_id,
         event_type: 'offer_executed',
@@ -175,6 +233,57 @@ export async function attemptPickupOffers({
       },
       { dataDir }
     );
+
+    const earliest = earliestExecutedEvent({ offer_id: o.offer_id, dataDir });
+    const iAmWinner = earliest && execEv?.event && earliest.event_id === execEv.event.event_id;
+
+    if (!iAmWinner) {
+      appendOfferFeedEvent(
+        {
+          offer_id: o.offer_id,
+          event_type: 'offer_execution_lost',
+          task_type: o.task_type,
+          expected_value: o.expected_value,
+          source_super_identity_id: o.source_super_identity_id,
+          target_node_id: node_id || null,
+          target_super_identity_id: node_super_identity_id || null,
+          reason: 'race_lost',
+          metadata: { earliest_ts: earliest?.ts || null }
+        },
+        { dataDir }
+      );
+      try {
+        process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_EXECUTION_LOST', ts: nowIso(), offer_id: o.offer_id, reason: 'race_lost' })}\n`);
+      } catch {}
+      continue;
+    }
+
+    // 4) Winner handling: write value ledger ONLY for winner
+    appendOfferFeedEvent(
+      {
+        offer_id: o.offer_id,
+        event_type: 'offer_execution_won',
+        task_type: o.task_type,
+        expected_value: o.expected_value,
+        source_super_identity_id: o.source_super_identity_id,
+        target_node_id: node_id || null,
+        target_super_identity_id: node_super_identity_id || null
+      },
+      { dataDir }
+    );
+
+    const targetSid = o.source_super_identity_id;
+    if (typeof targetSid === 'string' && targetSid.startsWith('sid-')) {
+      emitValueForTaskSuccess({
+        super_identity_id: targetSid,
+        context: { source_sid: 'system', expected_value: o.expected_value, offer_id: o.offer_id, task_type: o.task_type },
+        dataDir
+      });
+    }
+
+    try {
+      process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_EXECUTION_WON', ts: nowIso(), offer_id: o.offer_id })}\n`);
+    } catch {}
 
     try {
       process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_PICKUP_SUCCESS', ts: nowIso(), offer_id: o.offer_id })}\n`);
