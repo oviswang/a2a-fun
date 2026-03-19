@@ -5,6 +5,7 @@ node_modules/
 coverage/
 .tmp/
 data/*.json*
+!data/strategy_state.json
 data/*.tmp*
 data/node_id
 data/node_fingerprint

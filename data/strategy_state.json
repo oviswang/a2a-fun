@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "current_params": {
+    "threshold_adjustment": 0,
+    "task_weights": {},
+    "channel_weights": {}
+  },
+  "last_adjustment_at": null,
+  "last_adjustment_reason": null,
+  "rollback_candidate": null,
+  "pending_evaluation": null
+}
