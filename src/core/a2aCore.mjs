@@ -1,6 +1,7 @@
 import { normalizeStandardMessage } from './standardMessage.mjs';
 import { mapTextToTask } from '../intent/intentMapping.mjs';
 import { bindChannelUserToAgentId, loadLocalAgentId, loadNodeId } from '../identity/identityBinding.mjs';
+import { emitReputationEvent, getReputation } from '../reputation/reputation.mjs';
 
 function ok(result) {
   return { status: 'ok', result, error: null };
@@ -31,13 +32,18 @@ async function executeTask({ task, args, context } = {}) {
   if (task === 'ping') return ok({ pong: true, at: nowIso() });
 
   if (task === 'runtime_status') {
+    const sid = context?.super_identity_id || null;
+    const rep = sid ? getReputation(sid) : { ok: true, reputation: null };
+
     return ok({
       at: nowIso(),
       node_id: context?.node_id || null,
       local_agent_id: context?.local_agent_id || null,
       agent_id: context?.agent_id || null,
       session_id: context?.session_id || null,
-      super_identity_id: context?.super_identity_id || null,
+      super_identity_id: sid,
+      reputation_score: rep?.reputation?.score ?? null,
+      recent_event_count: rep?.reputation?.events ?? null,
       channel: context?.channel || null,
       user_id: context?.user_id || null
     });
@@ -90,5 +96,24 @@ export async function a2aCoreHandleMessage(standardMsg) {
     metadata: msg.metadata
   };
 
-  return executeTask({ task: mapped.task, args: mapped.args, context });
+  const res = await executeTask({ task: mapped.task, args: mapped.args, context });
+
+  // Reputation hook (minimal, auditable): system emits task_success/task_failure bound to super_identity_id.
+  // No core redesign: best-effort, fail-closed (reputation failures must not break task execution).
+  try {
+    const sid = context.super_identity_id;
+    if (typeof sid === 'string' && sid.startsWith('sid-')) {
+      const event_type = res?.status === 'ok' ? 'task_success' : 'task_failure';
+      emitReputationEvent({
+        super_identity_id: sid,
+        event_type,
+        source: { type: 'system' },
+        context: { task: mapped.task, channel: context.channel, meta: { intent: mapped.intent } }
+      });
+    }
+  } catch {
+    // best-effort
+  }
+
+  return res;
 }
