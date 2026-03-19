@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { appendStrategyEvent, appendStrategyEvaluation } from '../analytics/strategyTimeline.mjs';
 
 function nowIso(nowMs = Date.now()) {
   return new Date(nowMs).toISOString();
@@ -145,12 +147,46 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
             })}\n`
           );
         } catch {}
+
+        // best-effort timeline evaluation record
+        try {
+          const result = current > baseline * 1.1 ? 'improved' : current < baseline * 0.9 ? 'degraded' : 'flat';
+          appendStrategyEvaluation(
+            {
+              super_identity_id: sid,
+              linked_event_id: st.pending_evaluation?.linked_event_id || null,
+              result,
+              before_reward: baseline,
+              after_reward: current,
+              decision: 'rolled_back'
+            },
+            { dataDir }
+          ).catch(() => {});
+        } catch {}
+
         return { ok: true, action: 'rollback', state: rolled };
       }
 
       // evaluation done but no rollback
       const cleared = { ...st, pending_evaluation: null };
       saveStrategyState(cleared, { dataDir });
+
+      // best-effort timeline evaluation record
+      try {
+        const result = current > baseline * 1.1 ? 'improved' : current < baseline * 0.9 ? 'degraded' : 'flat';
+        appendStrategyEvaluation(
+          {
+            super_identity_id: sid,
+            linked_event_id: st.pending_evaluation?.linked_event_id || null,
+            result,
+            before_reward: baseline,
+            after_reward: current,
+            decision: 'kept'
+          },
+          { dataDir }
+        ).catch(() => {});
+      } catch {}
+
       return { ok: true, action: 'evaluation_cleared', state: cleared };
     }
   }
@@ -233,6 +269,37 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
     );
   } catch {}
 
+  // derive adjustment type/delta (explainable)
+  let adjType = 'weight_up';
+  let adjDelta = 0;
+  if (Number(proposed.threshold_adjustment) !== Number(cur.threshold_adjustment)) {
+    adjDelta = Number(proposed.threshold_adjustment) - Number(cur.threshold_adjustment);
+    adjType = adjDelta >= 0 ? 'threshold_up' : 'threshold_down';
+  } else {
+    const tKeys = new Set([...Object.keys(cur.task_weights || {}), ...Object.keys(proposed.task_weights || {})]);
+    for (const k of tKeys) {
+      const d = Number(proposed.task_weights?.[k] ?? 1) - Number(cur.task_weights?.[k] ?? 1);
+      if (d !== 0) {
+        adjDelta = d;
+        adjType = d >= 0 ? 'weight_up' : 'weight_down';
+        break;
+      }
+    }
+    if (adjDelta === 0) {
+      const cKeys = new Set([...Object.keys(cur.channel_weights || {}), ...Object.keys(proposed.channel_weights || {})]);
+      for (const k of cKeys) {
+        const d = Number(proposed.channel_weights?.[k] ?? 1) - Number(cur.channel_weights?.[k] ?? 1);
+        if (d !== 0) {
+          adjDelta = d;
+          adjType = d >= 0 ? 'weight_up' : 'weight_down';
+          break;
+        }
+      }
+    }
+  }
+
+  const linked_event_id = `evt-${crypto.randomUUID()}`;
+
   const next = {
     ...st,
     current_params: proposed,
@@ -241,7 +308,8 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
     rollback_candidate: { previous_params: cur },
     pending_evaluation: {
       applied_at: nowIso(now),
-      baseline_reward_last_24h: Number(localE?.trend?.reward_last_24h ?? 0)
+      baseline_reward_last_24h: Number(localE?.trend?.reward_last_24h ?? 0),
+      linked_event_id
     }
   };
 
@@ -259,6 +327,32 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
         reason
       })}\n`
     );
+  } catch {}
+
+  // best-effort timeline write (append-only; must not block strategy flow)
+  try {
+    const profileDoc = safeReadJson(getPaths({ dataDir }).profiles);
+    const profile = profileDoc?.profiles?.find?.((p) => p.sid === sid) || null;
+
+    appendStrategyEvent(
+      {
+        event_id: linked_event_id,
+        super_identity_id: sid,
+        adjustment: { type: adjType, delta: Number(adjDelta || 0), reason },
+        before: {
+          threshold_adjustment: Number(cur.threshold_adjustment ?? 0),
+          reward_last_24h: Number(localE?.trend?.reward_last_24h ?? 0),
+          avg_reward_per_task: Number(profile?.avg_reward_per_task ?? 0)
+        },
+        after: {
+          threshold_adjustment: Number(proposed.threshold_adjustment ?? 0)
+        },
+        evaluation: {
+          baseline_reward_24h: Number(localE?.trend?.reward_last_24h ?? 0)
+        }
+      },
+      { dataDir }
+    ).catch(() => {});
   } catch {}
 
   return { ok: true, action: 'applied', state: next };
