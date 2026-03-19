@@ -2,6 +2,7 @@ import { normalizeStandardMessage } from './standardMessage.mjs';
 import { mapTextToTask } from '../intent/intentMapping.mjs';
 import { bindChannelUserToAgentId, loadLocalAgentId, loadNodeId } from '../identity/identityBinding.mjs';
 import { emitReputationEvent, getReputation } from '../reputation/reputation.mjs';
+import { emitValueForTaskSuccess } from '../value/value.mjs';
 
 function ok(result) {
   return { status: 'ok', result, error: null };
@@ -103,13 +104,24 @@ export async function a2aCoreHandleMessage(standardMsg) {
   try {
     const sid = context.super_identity_id;
     if (typeof sid === 'string' && sid.startsWith('sid-')) {
-      const event_type = res?.status === 'ok' ? 'task_success' : 'task_failure';
+      const okTask = res?.status === 'ok';
+      const event_type = okTask ? 'task_success' : 'task_failure';
+
       emitReputationEvent({
         super_identity_id: sid,
         event_type,
         source: { type: 'system' },
         context: { task: mapped.task, channel: context.channel, meta: { intent: mapped.intent } }
       });
+
+      // Economic/value layer: ONLY on task_success.
+      if (okTask) {
+        emitValueForTaskSuccess({
+          super_identity_id: sid,
+          ts: new Date().toISOString(),
+          context: { source_sid: 'system', task: mapped.task, channel: context.channel, meta: { intent: mapped.intent } }
+        });
+      }
     }
   } catch {
     // best-effort
