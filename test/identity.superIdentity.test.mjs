@@ -33,21 +33,27 @@ test('no silent merge: different channels get different super_identity_id until 
   });
 });
 
-test('explicit merge links multiple channels into one super_identity_id and is auditable', async () => {
+test('explicit merge links multiple channels into one super_identity_id and is auditable (telegram+whatsapp+lark)', async () => {
   await withTempDir(async (dataDir) => {
     const t = resolveSuperIdentityId({ channel: 'telegram', user_id: '123', dataDir });
-    const w = resolveSuperIdentityId({ channel: 'whatsapp', user_id: '+659000', dataDir });
+    resolveSuperIdentityId({ channel: 'whatsapp', user_id: '+659000', dataDir });
+    resolveSuperIdentityId({ channel: 'lark', user_id: 'ou_xxx', dataDir });
 
     const merged = mergeIdentity({
       dataDir,
       target_super_identity_id: t.super_identity_id,
-      sources: [{ channel: 'whatsapp', user_id: '+659000' }]
+      sources: [
+        { channel: 'whatsapp', user_id: '+659000' },
+        { channel: 'lark', user_id: 'ou_xxx' }
+      ]
     });
     assert.equal(merged.ok, true);
     assert.equal(merged.merged, true);
 
     const w2 = resolveSuperIdentityId({ channel: 'whatsapp', user_id: '+659000', dataDir });
+    const l2 = resolveSuperIdentityId({ channel: 'lark', user_id: 'ou_xxx', dataDir });
     assert.equal(w2.super_identity_id, t.super_identity_id);
+    assert.equal(l2.super_identity_id, t.super_identity_id);
 
     const state = inspectIdentityState({ dataDir });
     assert.equal(state.ok, true);
