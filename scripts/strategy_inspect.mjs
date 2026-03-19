@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { rebuildStrategyProfiles } from '../src/analytics/strategyCompetition.mjs';
+import { loadStrategyState } from '../src/strategy/evolution.mjs';
 
 function parseArgs(argv) {
   const out = { mode: 'global', value: null };
@@ -21,7 +22,8 @@ const snapshot = rebuilt.snapshot;
 if (mode === 'sid') {
   const sid = String(value || '').trim();
   const p = profiles.find((x) => x.sid === sid) || null;
-  process.stdout.write(JSON.stringify({ ok: true, mode: 'sid', sid, profile: p, snapshot }, null, 2) + '\n');
+  const st = loadStrategyState();
+  process.stdout.write(JSON.stringify({ ok: true, mode: 'sid', sid, profile: p, strategy_state: st, snapshot }, null, 2) + '\n');
   process.exit(0);
 }
 

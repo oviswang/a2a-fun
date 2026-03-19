@@ -100,6 +100,18 @@ function loadEarningsAnalytics({ dataDir } = {}) {
   }
 }
 
+function loadStrategyParams({ dataDir } = {}) {
+  try {
+    const dir = dataDir || path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'data');
+    const p = path.join(dir, 'strategy_state.json');
+    const raw = fs.readFileSync(p, 'utf8');
+    const j = JSON.parse(String(raw || ''));
+    return j?.current_params || null;
+  } catch {
+    return null;
+  }
+}
+
 function preferenceWeightFromBreakdown(map, key) {
   if (!map || typeof map !== 'object') return 1.0;
   const entries = Object.entries(map).filter(([, v]) => Number.isFinite(Number(v)) && Number(v) > 0);
@@ -120,7 +132,7 @@ function preferenceWeightFromBreakdown(map, key) {
   return clamp(w, 0.8, 1.2);
 }
 
-export function computeCurrentThreshold({ base_threshold, inflight, reputation_score, last_accepted_at, earnings_trend } = {}) {
+export function computeCurrentThreshold({ base_threshold, inflight, reputation_score, last_accepted_at, earnings_trend, strategy_params } = {}) {
   const base = num(base_threshold, 1);
 
   let overload_penalty = 0;
@@ -152,13 +164,16 @@ export function computeCurrentThreshold({ base_threshold, inflight, reputation_s
     else if (last24h < prev24h) threshold_adjustment = Number.isFinite(deltaDown) ? deltaDown : -0.2;
   }
 
-  const raw = base + overload_penalty + reputation_bonus - idle_discount + threshold_adjustment;
+  const local_threshold_adjustment = clamp(Number(strategy_params?.threshold_adjustment ?? 0), -1.0, 1.0);
+
+  const raw = base + overload_penalty + reputation_bonus - idle_discount + threshold_adjustment + local_threshold_adjustment;
   return {
     base_threshold: base,
     overload_penalty,
     reputation_bonus,
     idle_discount,
     threshold_adjustment,
+    local_threshold_adjustment,
     unclamped: raw,
     current_threshold: clamp(raw, 0.5, 5)
   };
@@ -180,8 +195,15 @@ export function computeStrategyEffectiveExpectedValue({ expected_value, task_typ
   const tKey = typeof task_type === 'string' && task_type.trim() ? task_type.trim() : 'unknown';
   const cKey = typeof channel === 'string' && channel.trim() ? channel.trim() : 'unknown';
 
-  const wTask = preferenceWeightFromBreakdown(myAnalytics?.reward_by_task_type, tKey);
-  const wChan = preferenceWeightFromBreakdown(myAnalytics?.reward_by_channel, cKey);
+  const strategy_params = loadStrategyParams({ dataDir });
+  const baseTask = preferenceWeightFromBreakdown(myAnalytics?.reward_by_task_type, tKey);
+  const baseChan = preferenceWeightFromBreakdown(myAnalytics?.reward_by_channel, cKey);
+
+  const localTask = clamp(Number(strategy_params?.task_weights?.[tKey] ?? 1.0), 0.8, 1.2);
+  const localChan = clamp(Number(strategy_params?.channel_weights?.[cKey] ?? 1.0), 0.8, 1.2);
+
+  const wTask = clamp(baseTask * localTask, 0.8, 1.2);
+  const wChan = clamp(baseChan * localChan, 0.8, 1.2);
 
   return {
     ok: true,
@@ -206,20 +228,28 @@ export function shouldAcceptTask({ expected_value, reputation_score, task_type, 
   const mySid = typeof node_super_identity_id === 'string' && node_super_identity_id.startsWith('sid-') ? node_super_identity_id : null;
   const earningsAll = loadEarningsAnalytics({ dataDir });
   const myAnalytics = mySid && earningsAll ? earningsAll[mySid] : null;
+  const strategy_params = loadStrategyParams({ dataDir });
 
   const formula = computeCurrentThreshold({
     base_threshold: num(process.env.A2A_BASE_THRESHOLD, 1),
     inflight,
     reputation_score: rep,
     last_accepted_at: st.last_accepted_at,
-    earnings_trend: myAnalytics?.trend || null
+    earnings_trend: myAnalytics?.trend || null,
+    strategy_params
   });
 
   const tKey = typeof task_type === 'string' && task_type.trim() ? task_type.trim() : 'unknown';
   const cKey = typeof channel === 'string' && channel.trim() ? channel.trim() : 'unknown';
 
-  const preference_weight_task = preferenceWeightFromBreakdown(myAnalytics?.reward_by_task_type, tKey);
-  const preference_weight_channel = preferenceWeightFromBreakdown(myAnalytics?.reward_by_channel, cKey);
+  const base_task = preferenceWeightFromBreakdown(myAnalytics?.reward_by_task_type, tKey);
+  const base_channel = preferenceWeightFromBreakdown(myAnalytics?.reward_by_channel, cKey);
+
+  const local_task = clamp(Number(strategy_params?.task_weights?.[tKey] ?? 1.0), 0.8, 1.2);
+  const local_channel = clamp(Number(strategy_params?.channel_weights?.[cKey] ?? 1.0), 0.8, 1.2);
+
+  const preference_weight_task = clamp(base_task * local_task, 0.8, 1.2);
+  const preference_weight_channel = clamp(base_channel * local_channel, 0.8, 1.2);
 
   const effective_expected_value = ev * preference_weight_task * preference_weight_channel;
 
