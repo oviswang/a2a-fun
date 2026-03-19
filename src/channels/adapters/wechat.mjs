@@ -1,14 +1,25 @@
-import { createBaseAdapter } from './baseAdapter.mjs';
+import { createCAPAdapter } from '../capAdapter.mjs';
 
-// WeChat adapter (placeholder): normalization only.
-// Transport differs between Official Accounts / WeCom / personal bots.
-export const wechatAdapter = {
-  ...createBaseAdapter({ channel: 'wechat' }),
+export const wechatAdapter = createCAPAdapter({
+  channel: 'wechat',
 
-  normalizeInbound(inbound = {}) {
-    // Accept { FromUserName, Content } (OA) or { user_id, text }
-    const user_id = String(inbound?.FromUserName ?? inbound?.user_id ?? '');
-    const text = inbound?.Content ?? inbound?.text ?? '';
-    return createBaseAdapter({ channel: 'wechat' }).normalizeInbound({ user_id, text, metadata: { raw: inbound } });
+  normalize(inbound = {}) {
+    const user_id = String(inbound?.FromUserName ?? inbound?.user_id ?? '').trim();
+    const text = String(inbound?.Content ?? inbound?.text ?? '').trim();
+
+    return {
+      user_id: user_id || 'unknown',
+      agent_id: null,
+      session_id: String(inbound?.ToUserName ?? inbound?.session_id ?? '') || null,
+      channel: 'wechat',
+      text,
+      metadata: { raw: inbound }
+    };
+  },
+
+  formatResponse(result) {
+    if (!result) return { text: '' };
+    if (result.status !== 'ok') return { text: `ERROR: ${result.error?.code || 'unknown'}` };
+    return { text: typeof result.result === 'string' ? result.result : JSON.stringify(result.result) };
   }
-};
+});

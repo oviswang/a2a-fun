@@ -1,12 +1,25 @@
-import { createBaseAdapter } from './baseAdapter.mjs';
+import { createCAPAdapter } from '../capAdapter.mjs';
 
-export const whatsappAdapter = {
-  ...createBaseAdapter({ channel: 'whatsapp' }),
+export const whatsappAdapter = createCAPAdapter({
+  channel: 'whatsapp',
 
-  normalizeInbound(inbound = {}) {
-    // WhatsApp (Baileys/OpenClaw) often provides: { chat_id, sender_id, message_id, text }
-    const user_id = String(inbound?.sender_id ?? inbound?.chat_id ?? inbound?.user_id ?? '');
-    const text = inbound?.text ?? inbound?.message?.conversation ?? inbound?.message?.extendedTextMessage?.text ?? '';
-    return createBaseAdapter({ channel: 'whatsapp' }).normalizeInbound({ user_id, text, metadata: { raw: inbound } });
+  normalize(inbound = {}) {
+    const user_id = String(inbound?.sender_id ?? inbound?.chat_id ?? inbound?.user_id ?? '').trim();
+    const text = String(inbound?.text ?? inbound?.message?.conversation ?? inbound?.message?.extendedTextMessage?.text ?? '').trim();
+
+    return {
+      user_id: user_id || 'unknown',
+      agent_id: null,
+      session_id: String(inbound?.chat_id ?? inbound?.jid ?? '') || null,
+      channel: 'whatsapp',
+      text,
+      metadata: { raw: inbound }
+    };
+  },
+
+  formatResponse(result) {
+    if (!result) return { text: '' };
+    if (result.status !== 'ok') return { text: `ERROR: ${result.error?.code || 'unknown'}` };
+    return { text: typeof result.result === 'string' ? result.result : JSON.stringify(result.result) };
   }
-};
+});

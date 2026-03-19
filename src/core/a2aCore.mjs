@@ -35,7 +35,8 @@ async function executeTask({ task, args, context } = {}) {
       at: nowIso(),
       node_id: context?.node_id || null,
       local_agent_id: context?.local_agent_id || null,
-      a2a_agent_id: context?.a2a_agent_id || null,
+      agent_id: context?.agent_id || null,
+      session_id: context?.session_id || null,
       channel: context?.channel || null,
       user_id: context?.user_id || null
     });
@@ -71,7 +72,8 @@ export async function a2aCoreHandleMessage(standardMsg) {
   }
 
   const bind = bindChannelUserToAgentId({ channel: msg.channel, user_id: msg.user_id });
-  const a2a_agent_id = bind?.agent_id || null;
+  const agent_id = msg.agent_id || bind?.agent_id || null;
+  const session_id = msg.session_id || `${msg.channel}:${msg.user_id}`;
 
   const mapped = mapTextToTask({ text: msg.text });
   if (!mapped?.ok) return fail('INTENT_MAPPING_FAILED', mapped?.error || null);
@@ -79,7 +81,8 @@ export async function a2aCoreHandleMessage(standardMsg) {
   const context = {
     node_id,
     local_agent_id,
-    a2a_agent_id,
+    agent_id,
+    session_id,
     channel: msg.channel,
     user_id: msg.user_id,
     metadata: msg.metadata

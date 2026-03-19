@@ -1,17 +1,18 @@
-import { normalizeStandardMessage } from '../../core/standardMessage.mjs';
+import { createCAPAdapter } from '../capAdapter.mjs';
 
-// OpenClaw inbound meta provides chat_id + channel; text passed separately.
-// We keep this adapter permissive so it works across WhatsApp/Telegram/Discord/etc.
-export const openclawAdapter = {
+export const openclawAdapter = createCAPAdapter({
   channel: 'openclaw',
 
-  normalizeInbound(inbound = {}) {
+  normalize(inbound = {}) {
     const channel = String(inbound.channel || inbound.provider || inbound.surface || '').trim() || 'unknown';
-    const user_id = String(inbound.chat_id || inbound.sender_id || inbound.user_id || '').trim();
+    const user_id = String(inbound.chat_id || inbound.sender_id || inbound.user_id || '').trim() || 'unknown';
     const text = typeof inbound.text === 'string' ? inbound.text : String(inbound.message || inbound.body || '');
 
-    return normalizeStandardMessage({
-      user_id: user_id || 'unknown',
+    return {
+      user_id,
+      // agent_id/session_id resolved in bindIdentity
+      agent_id: null,
+      session_id: String(inbound.thread_id || inbound.threadId || '') || null,
       channel,
       text,
       metadata: {
@@ -20,15 +21,14 @@ export const openclawAdapter = {
         message_id: inbound.message_id || null,
         raw: inbound.metadata || null
       }
-    });
+    };
   },
 
-  formatOutbound({ result } = {}) {
-    // Return plain text; channel plugin handles formatting.
+  formatResponse(result) {
     if (!result) return { text: '' };
     if (result.status !== 'ok') {
       return { text: `A2A error: ${result.error?.code || result.status || 'unknown'}` };
     }
     return { text: typeof result.result === 'string' ? result.result : JSON.stringify(result.result) };
   }
-};
+});

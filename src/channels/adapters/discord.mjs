@@ -1,12 +1,25 @@
-import { createBaseAdapter } from './baseAdapter.mjs';
+import { createCAPAdapter } from '../capAdapter.mjs';
 
-export const discordAdapter = {
-  ...createBaseAdapter({ channel: 'discord' }),
+export const discordAdapter = createCAPAdapter({
+  channel: 'discord',
 
-  normalizeInbound(inbound = {}) {
-    // Discord shapes vary; accept { author: { id }, content } or { user_id, text }
-    const user_id = String(inbound?.author?.id ?? inbound?.user?.id ?? inbound?.user_id ?? '');
-    const text = inbound?.content ?? inbound?.text ?? '';
-    return createBaseAdapter({ channel: 'discord' }).normalizeInbound({ user_id, text, metadata: { raw: inbound } });
+  normalize(inbound = {}) {
+    const user_id = String(inbound?.author?.id ?? inbound?.user?.id ?? inbound?.user_id ?? '').trim();
+    const text = String(inbound?.content ?? inbound?.text ?? '').trim();
+
+    return {
+      user_id: user_id || 'unknown',
+      agent_id: null,
+      session_id: String(inbound?.channel_id ?? inbound?.channelId ?? inbound?.thread_id ?? '') || null,
+      channel: 'discord',
+      text,
+      metadata: { raw: inbound }
+    };
+  },
+
+  formatResponse(result) {
+    if (!result) return { text: '' };
+    if (result.status !== 'ok') return { text: `ERROR: ${result.error?.code || 'unknown'}` };
+    return { text: typeof result.result === 'string' ? result.result : JSON.stringify(result.result) };
   }
-};
+});

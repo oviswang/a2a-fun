@@ -4,7 +4,6 @@
 
 import fs from 'node:fs';
 import { getAdapter } from '../src/channels/adapterRegistry.mjs';
-import { a2aCoreHandleMessage } from '../src/core/a2aCore.mjs';
 
 function parseArgs(argv) {
   const out = { channel: 'openclaw' };
@@ -36,7 +35,8 @@ try {
   inbound = { text: raw };
 }
 
-const standard = adapter.normalizeInbound(inbound);
-const result = await a2aCoreHandleMessage(standard);
-const outbound = adapter.formatOutbound({ result });
-process.stdout.write(JSON.stringify({ ok: true, standard, result, outbound }, null, 2));
+const standard = adapter.normalize(inbound);
+const bound = adapter.bindIdentity(standard);
+const result = await adapter.execute(bound);
+const outbound = adapter.formatResponse(result);
+process.stdout.write(JSON.stringify({ ok: true, standard: bound, result, outbound }, null, 2));

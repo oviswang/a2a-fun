@@ -18,11 +18,27 @@ const adapters = {
   matrix: matrixAdapter
 };
 
+function assertCap(adapter, name) {
+  const required = ['normalize', 'bindIdentity', 'execute', 'formatResponse', 'health'];
+  for (const k of required) {
+    if (typeof adapter?.[k] !== 'function') {
+      throw new Error(`adapterRegistry: non-compliant adapter ${name}: missing ${k}()`);
+    }
+  }
+  if (typeof adapter?.channel !== 'string' || !adapter.channel) {
+    throw new Error(`adapterRegistry: non-compliant adapter ${name}: missing channel`);
+  }
+}
+
 export function getAdapter(channel) {
   const ch = String(channel || '').trim().toLowerCase();
-  return adapters[ch] || null;
+  const a = adapters[ch] || null;
+  if (a) assertCap(a, ch);
+  return a;
 }
 
 export function listAdapters() {
+  // Validate all at listing time as well.
+  for (const [name, a] of Object.entries(adapters)) assertCap(a, name);
   return Object.keys(adapters).sort();
 }

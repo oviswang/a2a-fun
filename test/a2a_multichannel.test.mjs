@@ -9,6 +9,8 @@ function expectStandard(m) {
   assert.ok(m.user_id.length > 0);
   assert.equal(typeof m.channel, 'string');
   assert.ok(m.channel.length > 0);
+  assert.equal(typeof m.agent_id === 'string' || m.agent_id === null, true);
+  assert.equal(typeof m.session_id === 'string' || m.session_id === null, true);
   assert.equal(typeof m.text, 'string');
   assert.equal(typeof m.metadata, 'object');
 }
@@ -25,9 +27,12 @@ test('message_normalization: each adapter produces StandardMessage', () => {
   for (const ch of ['lark', 'telegram', 'discord', 'whatsapp', 'wechat', 'qq', 'matrix']) {
     const a = getAdapter(ch);
     assert.ok(a);
-    const std = a.normalizeInbound({ user_id: 'u1', text: 'ping' });
-    expectStandard(std);
-    assert.equal(std.channel, ch);
+    const std = a.normalize({ user_id: 'u1', text: 'ping' });
+    const bound = a.bindIdentity(std);
+    expectStandard(bound);
+    assert.equal(bound.channel, ch);
+    assert.ok(bound.agent_id);
+    assert.ok(bound.session_id);
   }
 });
 
@@ -44,5 +49,6 @@ test('intent_task_mapping: runtime_status works', async () => {
   assert.equal(res.status, 'ok');
   assert.ok(res.result.node_id);
   assert.ok(res.result.local_agent_id);
-  assert.ok(res.result.a2a_agent_id);
+  assert.ok(res.result.agent_id);
+  assert.ok(res.result.session_id);
 });
