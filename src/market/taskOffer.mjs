@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { appendOfferFeedEvent } from './offerFeed.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -15,7 +16,8 @@ export function createTaskOffer({
   payload,
   timeout_ms,
   source_super_identity_id,
-  metadata
+  metadata,
+  dataDir
 } = {}) {
   const offer = {
     offer_id: `offer-${crypto.randomUUID()}`,
@@ -30,6 +32,21 @@ export function createTaskOffer({
 
   try {
     process.stdout.write(`${JSON.stringify({ ok: true, event: 'TASK_OFFER_CREATED', ts: nowIso(), offer })}\n`);
+  } catch {}
+
+  // best-effort offer feed
+  try {
+    appendOfferFeedEvent(
+      {
+        offer_id: offer.offer_id,
+        event_type: 'offer_created',
+        task_type: offer.task_type,
+        expected_value: offer.expected_value,
+        source_super_identity_id: offer.source_super_identity_id,
+        metadata: { timeout_ms: offer.timeout_ms }
+      },
+      { dataDir }
+    );
   } catch {}
 
   return { ok: true, offer };
