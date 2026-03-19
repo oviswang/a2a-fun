@@ -103,7 +103,12 @@ export async function a2aCoreHandleMessage(standardMsg) {
     (typeof msg.metadata?.task?.expected_value === 'number' ? msg.metadata.task.expected_value : null) ??
     1;
 
-  const decision = shouldAcceptTask({ expected_value }, { node_id });
+  const requesterRep =
+    typeof context.super_identity_id === 'string' && context.super_identity_id.startsWith('sid-')
+      ? (getReputation(context.super_identity_id)?.reputation?.score ?? 0)
+      : 0;
+
+  const decision = shouldAcceptTask({ expected_value, reputation_score: requesterRep }, { node_id });
 
   // TASK_DECISION logging (explainable)
   try {
@@ -114,6 +119,9 @@ export async function a2aCoreHandleMessage(standardMsg) {
         ts: new Date().toISOString(),
         node_id,
         expected_value,
+        current_threshold: decision.detail?.current_threshold ?? null,
+        inflight: decision.detail?.inflight ?? null,
+        reputation_score: decision.detail?.reputation_score ?? null,
         accepted: decision.accepted,
         reason: decision.reason
       })}\n`
@@ -121,7 +129,13 @@ export async function a2aCoreHandleMessage(standardMsg) {
   } catch {}
 
   if (!decision.accepted) {
-    return ok({ accepted: false, reason: decision.reason, expected_value });
+    return ok({
+      accepted: false,
+      reason: decision.reason,
+      expected_value,
+      current_threshold: decision.detail?.current_threshold ?? null,
+      inflight: decision.detail?.inflight ?? null
+    });
   }
 
   const res = await withInflight(() => executeTask({ task: mapped.task, args: mapped.args, context: { ...context, expected_value } }));
