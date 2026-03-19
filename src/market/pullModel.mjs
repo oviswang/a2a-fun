@@ -4,6 +4,7 @@ import path from 'node:path';
 import { appendOfferFeedEvent, rebuildMarketMetrics } from './offerFeed.mjs';
 import { shouldAcceptOffer } from './offerDecision.mjs';
 import { emitValueForTaskSuccess, getValue } from '../value/value.mjs';
+import { emitReputationEvent } from '../reputation/reputation.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -216,6 +217,19 @@ export async function attemptPickupOffers({
       try {
         process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_EXECUTION_LOST', ts: nowIso(), offer_id: o.offer_id, reason: 'already_executed' })}\n`);
       } catch {}
+
+      // reputation feedback (lightweight)
+      try {
+        if (typeof node_super_identity_id === 'string' && node_super_identity_id.startsWith('sid-')) {
+          emitReputationEvent({
+            super_identity_id: node_super_identity_id,
+            event_type: 'competition_loss',
+            source: { type: 'system' },
+            context: { task: o.task_type, channel: 'pull', meta: { offer_id: o.offer_id, reason: 'already_executed' } }
+          }, { dataDir });
+        }
+      } catch {}
+
       continue;
     }
 
@@ -255,6 +269,18 @@ export async function attemptPickupOffers({
       try {
         process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_EXECUTION_LOST', ts: nowIso(), offer_id: o.offer_id, reason: 'race_lost' })}\n`);
       } catch {}
+
+      try {
+        if (typeof node_super_identity_id === 'string' && node_super_identity_id.startsWith('sid-')) {
+          emitReputationEvent({
+            super_identity_id: node_super_identity_id,
+            event_type: 'competition_loss',
+            source: { type: 'system' },
+            context: { task: o.task_type, channel: 'pull', meta: { offer_id: o.offer_id, reason: 'race_lost' } }
+          }, { dataDir });
+        }
+      } catch {}
+
       continue;
     }
 
@@ -271,6 +297,18 @@ export async function attemptPickupOffers({
       },
       { dataDir }
     );
+
+    // reputation feedback (lightweight)
+    try {
+      if (typeof node_super_identity_id === 'string' && node_super_identity_id.startsWith('sid-')) {
+        emitReputationEvent({
+          super_identity_id: node_super_identity_id,
+          event_type: 'competition_win',
+          source: { type: 'system' },
+          context: { task: o.task_type, channel: 'pull', meta: { offer_id: o.offer_id } }
+        }, { dataDir });
+      }
+    } catch {}
 
     const targetSid = o.source_super_identity_id;
     if (typeof targetSid === 'string' && targetSid.startsWith('sid-')) {

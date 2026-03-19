@@ -57,7 +57,15 @@ function normalizeEvent(e) {
   if (!super_identity_id.startsWith('sid-')) return { ok: false, error: { code: 'INVALID_SUPER_ID' } };
 
   const event_type = String(e.event_type || '').trim();
-  const allowed = new Set(['task_success', 'task_failure', 'peer_ack', 'peer_flag', 'manual_feedback']);
+  const allowed = new Set([
+    'task_success',
+    'task_failure',
+    'peer_ack',
+    'peer_flag',
+    'manual_feedback',
+    'competition_win',
+    'competition_loss'
+  ]);
   if (!allowed.has(event_type)) return { ok: false, error: { code: 'INVALID_EVENT_TYPE' } };
 
   const source = isPlainObject(e.source) ? e.source : { type: 'system' };
@@ -98,6 +106,17 @@ function baseWeight(event_type) {
   if (event_type === 'peer_ack') return 1;
   if (event_type === 'peer_flag') return -2;
   if (event_type === 'manual_feedback') return 0;
+
+  // competition feedback (configurable)
+  if (event_type === 'competition_win') {
+    const w = Number(process.env.A2A_REP_WEIGHT_COMP_WIN ?? 1);
+    return Number.isFinite(w) ? w : 1;
+  }
+  if (event_type === 'competition_loss') {
+    const w = Number(process.env.A2A_REP_WEIGHT_COMP_LOSS ?? -0.2);
+    return Number.isFinite(w) ? w : -0.2;
+  }
+
   return 0;
 }
 
@@ -132,7 +151,9 @@ function ensureSidEntry(idx, sid) {
         task_failure: 0,
         peer_ack: 0,
         peer_flag: 0,
-        manual_feedback: 0
+        manual_feedback: 0,
+        competition_win: 0,
+        competition_loss: 0
       }
     };
   }
@@ -178,6 +199,25 @@ function isRateLimited({ ledgerPath, targetSid, sourceKey, hourIso, maxPerHour }
   return false;
 }
 
+function isCompetitionEventRateLimited({ ledgerPath, targetSid, hourIso, maxPerHour } = {}) {
+  const lines = tailLines(ledgerPath, 1200);
+  let c = 0;
+  for (const line of lines) {
+    let e;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (e?.super_identity_id !== targetSid) continue;
+    if (hourBucket(e?.ts) !== hourIso) continue;
+    if (e?.event_type !== 'competition_win' && e?.event_type !== 'competition_loss') continue;
+    c++;
+    if (c >= maxPerHour) return true;
+  }
+  return false;
+}
+
 /**
  * emitReputationEvent(event)
  * - append-only ledger
@@ -193,9 +233,21 @@ export function emitReputationEvent(event, { dataDir } = {}) {
 
   const delta = effectiveDelta(ev);
 
-  // Rate limit: max +5 per hour per source (peer/system). Self has zero delta anyway.
   const hourIso = hourBucket(ev.ts);
   const sourceKey = ev.source.type === 'peer' ? `peer:${ev.source.super_identity_id}` : ev.source.type;
+
+  // Competition anti-spam: max 5 competition events per hour per identity.
+  if (ev.event_type === 'competition_win' || ev.event_type === 'competition_loss') {
+    const maxCompetitionPerHour = Number(process.env.A2A_REP_COMPETITION_MAX_PER_HOUR ?? 5);
+    const limited = isCompetitionEventRateLimited({ ledgerPath, targetSid: ev.super_identity_id, hourIso, maxPerHour: maxCompetitionPerHour });
+    if (limited) {
+      const rateLimitedEvent = { ...ev, value: 0, context: { ...ev.context, meta: { ...(ev.context?.meta || {}), rate_limited: true } } };
+      appendJsonlLine(ledgerPath, rateLimitedEvent);
+      return { ok: true, event: rateLimitedEvent, applied_delta: 0, rate_limited: true };
+    }
+  }
+
+  // General positive-event cap: max +5 per hour per source (peer/system). Self has zero delta anyway.
   const maxPerHour = 5;
   if (delta > 0 && isRateLimited({ ledgerPath, targetSid: ev.super_identity_id, sourceKey, hourIso, maxPerHour })) {
     return { ok: false, error: { code: 'RATE_LIMITED', reason: 'max_positive_events_per_hour_per_source' } };
@@ -230,6 +282,25 @@ export function getReputation(super_identity_id, { dataDir } = {}) {
 export function getReputationBreakdown(super_identity_id, { dataDir } = {}) {
   const r = getReputation(super_identity_id, { dataDir });
   return { ok: true, super_identity_id: r.super_identity_id, breakdown: r.reputation?.breakdown || null };
+}
+
+export function getRecentReputationEvents(super_identity_id, { limit = 20, dataDir } = {}) {
+  const { ledger: ledgerPath } = getPaths({ dataDir });
+  const sid = String(super_identity_id || '').trim();
+  const lines = tailLines(ledgerPath, 5000);
+  const evs = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let e;
+    try {
+      e = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (e?.super_identity_id !== sid) continue;
+    evs.push(e);
+    if (evs.length >= limit) break;
+  }
+  return { ok: true, super_identity_id: sid, events: evs };
 }
 
 export function rebuildReputationIndex({ dataDir } = {}) {

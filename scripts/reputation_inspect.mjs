@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { getReputation, getReputationBreakdown } from '../src/reputation/reputation.mjs';
+import { getReputation, getReputationBreakdown, getRecentReputationEvents } from '../src/reputation/reputation.mjs';
 
 const sid = String(process.argv[2] || '').trim();
 if (!sid) {
@@ -10,4 +10,5 @@ if (!sid) {
 
 const r = getReputation(sid);
 const b = getReputationBreakdown(sid);
-process.stdout.write(JSON.stringify({ ok: true, reputation: r, breakdown: b }, null, 2) + '\n');
+const recent = getRecentReputationEvents(sid, { limit: 20 });
+process.stdout.write(JSON.stringify({ ok: true, reputation: r, breakdown: b, recent }, null, 2) + '\n');
