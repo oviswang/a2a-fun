@@ -23,13 +23,13 @@ test('task_success generates value and accumulates per super_identity separately
 
     emitValueForTaskSuccess({ super_identity_id: sid1, context: { source_sid: 'system', task: 't' }, dataDir });
     emitValueForTaskSuccess({ super_identity_id: sid1, context: { source_sid: 'system', task: 't' }, dataDir });
-    emitValueForTaskSuccess({ super_identity_id: sid2, context: { source_sid: 'system', task: 't' }, dataDir });
+    emitValueForTaskSuccess({ super_identity_id: sid2, context: { source_sid: 'system', task: 't', expected_value: 3 }, dataDir });
 
     const v1 = getValue(sid1, { dataDir }).value;
     const v2 = getValue(sid2, { dataDir }).value;
 
     assert.equal(v1.total_value, 2);
-    assert.equal(v2.total_value, 1);
+    assert.equal(v2.total_value, 3);
   });
 });
 

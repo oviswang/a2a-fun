@@ -3,6 +3,7 @@ import { mapTextToTask } from '../intent/intentMapping.mjs';
 import { bindChannelUserToAgentId, loadLocalAgentId, loadNodeId } from '../identity/identityBinding.mjs';
 import { emitReputationEvent, getReputation } from '../reputation/reputation.mjs';
 import { emitValueForTaskSuccess } from '../value/value.mjs';
+import { shouldAcceptTask, withInflight } from '../market/taskDecision.mjs';
 
 function ok(result) {
   return { status: 'ok', result, error: null };
@@ -97,7 +98,33 @@ export async function a2aCoreHandleMessage(standardMsg) {
     metadata: msg.metadata
   };
 
-  const res = await executeTask({ task: mapped.task, args: mapped.args, context });
+  const expected_value =
+    (typeof msg.metadata?.expected_value === 'number' ? msg.metadata.expected_value : null) ??
+    (typeof msg.metadata?.task?.expected_value === 'number' ? msg.metadata.task.expected_value : null) ??
+    1;
+
+  const decision = shouldAcceptTask({ expected_value }, { node_id });
+
+  // TASK_DECISION logging (explainable)
+  try {
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: true,
+        event: 'TASK_DECISION',
+        ts: new Date().toISOString(),
+        node_id,
+        expected_value,
+        accepted: decision.accepted,
+        reason: decision.reason
+      })}\n`
+    );
+  } catch {}
+
+  if (!decision.accepted) {
+    return ok({ accepted: false, reason: decision.reason, expected_value });
+  }
+
+  const res = await withInflight(() => executeTask({ task: mapped.task, args: mapped.args, context: { ...context, expected_value } }));
 
   // Reputation hook (minimal, auditable): system emits task_success/task_failure bound to super_identity_id.
   // No core redesign: best-effort, fail-closed (reputation failures must not break task execution).
@@ -119,7 +146,7 @@ export async function a2aCoreHandleMessage(standardMsg) {
         emitValueForTaskSuccess({
           super_identity_id: sid,
           ts: new Date().toISOString(),
-          context: { source_sid: 'system', task: mapped.task, channel: context.channel, meta: { intent: mapped.intent } }
+          context: { source_sid: 'system', expected_value, task: mapped.task, channel: context.channel, meta: { intent: mapped.intent } }
         });
       }
     }

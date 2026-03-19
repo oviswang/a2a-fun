@@ -128,8 +128,8 @@ export function emitValueForTaskSuccess({
   const source_sid = String(ctx.source_sid || 'system');
   const target_sid = sid;
 
-  // base rule
-  let base = 1;
+  // base rule: expected_value defaults to 1
+  let base = Number.isFinite(Number(ctx.expected_value)) ? Number(ctx.expected_value) : 1;
 
   // no self-reward
   if (source_sid === target_sid) base = 0;
