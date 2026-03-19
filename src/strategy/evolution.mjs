@@ -37,11 +37,11 @@ function atomicWriteJson(p, obj) {
   fs.renameSync(tmp, p);
 }
 
-export function loadStrategyState({ dataDir } = {}) {
+export function loadStrategyState({ dataDir, autoInit = true } = {}) {
   const { state } = getPaths({ dataDir });
   const j = safeReadJson(state);
   if (j && typeof j === 'object') return j;
-  return {
+  const init = {
     ok: true,
     current_params: {
       threshold_adjustment: 0,
@@ -53,6 +53,10 @@ export function loadStrategyState({ dataDir } = {}) {
     rollback_candidate: null,
     pending_evaluation: null
   };
+  if (autoInit) {
+    try { atomicWriteJson(state, init); } catch {}
+  }
+  return init;
 }
 
 export function saveStrategyState(next, { dataDir } = {}) {

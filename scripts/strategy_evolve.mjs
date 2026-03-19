@@ -9,8 +9,8 @@ if (!sid) {
   process.exit(2);
 }
 
-// Ensure derived views are fresh (best-effort)
-try { rebuildStrategyProfiles(); } catch {}
+// ensure derived analytics are up-to-date before evolving
+rebuildStrategyProfiles();
 
 const out = evaluateAndEvolveStrategy({ sid });
 process.stdout.write(JSON.stringify(out, null, 2) + '\n');
