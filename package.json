@@ -5,7 +5,7 @@
   "version": "0.0.0-phase1",
   "description": "a2a.fun Phase 1 implementation: identity, storage, profile extractor",
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
     "lint": "node -c src/**/*.mjs",
     "bootstrap": "node src/bootstrap/server.mjs"
   },

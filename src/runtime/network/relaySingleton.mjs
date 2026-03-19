@@ -274,3 +274,27 @@ export function initRelaySingleton({ node_id, relayCandidates = [], allowLocalRe
     }
   };
 }
+
+// Test-only escape hatch: reset process-global singleton to avoid cross-test contamination.
+export function __resetRelaySingletonForTests() {
+  try {
+    S.stopping = true;
+    if (S.reconnect_timer) clearTimeout(S.reconnect_timer);
+  } catch {}
+  try { if (S.activeWs) S.activeWs.close(); } catch {}
+  try { if (g.__RELAY_SINGLETON_WS__) g.__RELAY_SINGLETON_WS__.close(); } catch {}
+
+  S.initialized = false;
+  S.node_id = null;
+  S.allowLocalRelay = false;
+  S.relayCandidates = [];
+  S.connection_state = 'DISCONNECTED';
+  S.reconnect_backoff_ms = 500;
+  S.reconnect_timer = null;
+  S.activeWs = null;
+  S.stopping = false;
+  S.handlersByTopic = new Map();
+  S.connectLoopRunning = false;
+
+  try { g.__RELAY_SINGLETON_WS__ = null; } catch {}
+}

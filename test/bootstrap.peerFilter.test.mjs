@@ -15,20 +15,37 @@ async function withTempDir(fn) {
   }
 }
 
-test('bootstrap /peers filters localhost + 127.0.0.1 + example.com placeholders', async () => {
+test('bootstrap /peers returns protocol envelope + only active peers', async () => {
   await withTempDir(async (dir) => {
-    const dataFile = path.join(dir, 'bootstrap-peers.json');
+    const registryFile = path.join(dir, 'bootstrap-registry.json');
+    // Seed a registry containing one active node and one expired node.
+    const now = Date.now();
+    const activeLastSeen = new Date(now).toISOString();
+    const expiredLastSeen = new Date(now - 60 * 60 * 1000).toISOString();
+
     await fs.writeFile(
-      dataFile,
+      registryFile,
       JSON.stringify(
         {
-          peers: [
-            'http://127.0.0.1:3000/',
-            'http://localhost:3000/',
-            'https://node.example.com/',
-            'https://node2.example.com/',
-            'https://good.peer.example.net/'
-          ]
+          ok: true,
+          version: 'registry.v0.1',
+          updated_at: activeLastSeen,
+          nodes: {
+            'node-active': {
+              node_id: 'node-active',
+              last_seen: activeLastSeen,
+              relay_urls: ['wss://relay.example/relay'],
+              observed_addrs: [],
+              capabilities: { requires: ['run_check'] }
+            },
+            'node-expired': {
+              node_id: 'node-expired',
+              last_seen: expiredLastSeen,
+              relay_urls: ['wss://relay.example/relay'],
+              observed_addrs: [],
+              capabilities: { requires: ['run_check'] }
+            }
+          }
         },
         null,
         2
@@ -36,7 +53,7 @@ test('bootstrap /peers filters localhost + 127.0.0.1 + example.com placeholders'
       'utf8'
     );
 
-    const srv = createBootstrapServer({ bindHost: '127.0.0.1', port: 0, dataFile });
+    const srv = createBootstrapServer({ bindHost: '127.0.0.1', port: 0, registryFile });
     await srv.start();
     const addr = srv.address();
     assert.ok(addr && typeof addr.port === 'number');
@@ -46,17 +63,20 @@ test('bootstrap /peers filters localhost + 127.0.0.1 + example.com placeholders'
     assert.equal(res.status, 200);
     const j = await res.json();
 
-    assert.deepEqual(j, { ok: true, peers: ['https://good.peer.example.net/'] });
+    assert.equal(j.ok, true);
+    assert.equal(j.protocol, 'a2a/0.1');
+    assert.ok(Array.isArray(j.peers));
+    assert.ok(j.peers.find((p) => p.node_id === 'node-active'));
+    assert.ok(!j.peers.find((p) => p.node_id === 'node-expired'));
 
     await srv.close();
   });
 });
 
-test('bootstrap /join rejects unusable node URLs (localhost / placeholders)', async () => {
+test('bootstrap returns 404 for removed endpoints (join)', async () => {
   await withTempDir(async (dir) => {
-    const dataFile = path.join(dir, 'bootstrap-peers.json');
-
-    const srv = createBootstrapServer({ bindHost: '127.0.0.1', port: 0, dataFile });
+    const registryFile = path.join(dir, 'bootstrap-registry.json');
+    const srv = createBootstrapServer({ bindHost: '127.0.0.1', port: 0, registryFile });
     await srv.start();
     const addr = srv.address();
     const base = `http://127.0.0.1:${addr.port}`;
@@ -67,9 +87,10 @@ test('bootstrap /join rejects unusable node URLs (localhost / placeholders)', as
       body: JSON.stringify({ node: 'http://127.0.0.1:3000/' })
     });
 
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 404);
     const j = await res.json();
-    assert.deepEqual(j, { ok: false, error: { code: 'UNUSABLE_NODE', reason: 'unusable node url' } });
+    assert.equal(j.ok, false);
+    assert.equal(j.error.code, 'NOT_FOUND');
 
     await srv.close();
   });
