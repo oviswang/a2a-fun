@@ -31,6 +31,9 @@ function truncateEvent(event) {
   if (e?.adjustment?.reason) {
     e.adjustment.reason = truncateString(e.adjustment.reason, 1024);
   }
+  if (e?.adjustment?.imitation_reference?.reason) {
+    e.adjustment.imitation_reference.reason = truncateString(e.adjustment.imitation_reference.reason, 512);
+  }
   // hard cap total line size
   let line = safeJson(e);
   if (Buffer.byteLength(line, 'utf8') <= MAX_META_BYTES) return e;

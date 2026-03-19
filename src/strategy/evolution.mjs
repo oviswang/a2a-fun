@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { appendStrategyEvent, appendStrategyEvaluation } from '../analytics/strategyTimeline.mjs';
+import { findImitationCandidate, applyImitationSuggestionToParams } from './imitation.mjs';
 
 function nowIso(nowMs = Date.now()) {
   return new Date(nowMs).toISOString();
@@ -52,6 +53,8 @@ export function loadStrategyState({ dataDir, autoInit = true } = {}) {
     },
     last_adjustment_at: null,
     last_adjustment_reason: null,
+    last_adjustment_source: null,
+    imitation_reference: null,
     rollback_candidate: null,
     pending_evaluation: null
   };
@@ -246,6 +249,26 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
     }
   }
 
+  let last_adjustment_source = 'local_signal';
+  let imitation_reference = null;
+
+  // Imitation (optional): only when local signal produces no safe proposal
+  if (!proposed) {
+    const cand = findImitationCandidate(sid, { dataDir });
+    if (cand.ok && cand.suggested_adjustment) {
+      const applied = applyImitationSuggestionToParams(cur, cand.suggested_adjustment);
+      if (applied.ok) {
+        proposed = applied.next_params;
+        reason = cand.reason;
+        last_adjustment_source = 'imitation_hint';
+        imitation_reference = {
+          candidate_strategy_type: cand.candidate_strategy_type,
+          reason: cand.reason
+        };
+      }
+    }
+  }
+
   if (!proposed || !reason) return { ok: true, action: 'noop', reason: 'no_safe_adjustment', state: st };
 
   try {
@@ -305,6 +328,8 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
     current_params: proposed,
     last_adjustment_at: nowIso(now),
     last_adjustment_reason: reason,
+    last_adjustment_source,
+    imitation_reference,
     rollback_candidate: { previous_params: cur },
     pending_evaluation: {
       applied_at: nowIso(now),
@@ -338,7 +363,7 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
       {
         event_id: linked_event_id,
         super_identity_id: sid,
-        adjustment: { type: adjType, delta: Number(adjDelta || 0), reason },
+        adjustment: { type: adjType, delta: Number(adjDelta || 0), reason, source: last_adjustment_source, imitation_reference },
         before: {
           threshold_adjustment: Number(cur.threshold_adjustment ?? 0),
           reward_last_24h: Number(localE?.trend?.reward_last_24h ?? 0),
