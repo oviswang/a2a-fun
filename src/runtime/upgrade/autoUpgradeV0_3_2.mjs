@@ -38,6 +38,61 @@ async function writeJsonAtomic(p, obj) {
   await fs.rename(tmp, p);
 }
 
+async function backupCriticalFiles({ ws, dataDir, node_id, target_version }) {
+  try {
+    const ts = nowIso().replace(/[:.]/g, '-');
+    const backupDir = path.join(dataDir, 'upgrade_backup', ts);
+    await fs.mkdir(backupDir, { recursive: true });
+
+    const files = [
+      'strategy_state.json',
+      'strategy_timeline.jsonl',
+      'reward_ledger.jsonl',
+      'reward_balance.json',
+      'offer_feed.jsonl',
+      'earnings_analytics.json'
+    ];
+
+    for (const f of files) {
+      const src = path.join(dataDir, f);
+      const dst = path.join(backupDir, f);
+      try {
+        const st = await fs.stat(src);
+        if (st.isFile()) await fs.copyFile(src, dst);
+      } catch {}
+    }
+
+    log('NODE_UPGRADE_BACKUP_OK', { node_id: node_id || null, target_version, backup_dir: backupDir });
+    return { ok: true, backup_dir: backupDir };
+  } catch (e) {
+    log('NODE_UPGRADE_BACKUP_FAILED', { node_id: node_id || null, target_version, error: String(e?.message || e) });
+    return { ok: false };
+  }
+}
+
+async function restoreCriticalFiles({ dataDir, node_id, target_version, backup_dir }) {
+  if (!backup_dir) return { ok: true, skipped: true };
+  try {
+    const files = await fs.readdir(backup_dir).catch(() => []);
+    for (const f of files) {
+      const src = path.join(backup_dir, f);
+      const dst = path.join(dataDir, f);
+      try {
+        const st = await fs.stat(src);
+        if (st.isFile()) {
+          await fs.mkdir(path.dirname(dst), { recursive: true });
+          await fs.copyFile(src, dst);
+        }
+      } catch {}
+    }
+    log('NODE_UPGRADE_RESTORE_OK', { node_id: node_id || null, target_version, backup_dir });
+    return { ok: true };
+  } catch (e) {
+    log('NODE_UPGRADE_RESTORE_FAILED', { node_id: node_id || null, target_version, backup_dir, error: String(e?.message || e) });
+    return { ok: false };
+  }
+}
+
 async function readJsonSafe(p) {
   try {
     const raw = await fs.readFile(p, 'utf8');
@@ -310,6 +365,7 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
   nextState.state = 'upgrade_needed';
   await writeJsonAtomic(upgradeStatePath, nextState).catch(() => {});
   log('UPGRADE_NEEDED', { node_id: node_id || null, local_version: local_v, target_version });
+  log('NODE_UPGRADE_DETECTED', { previous_version: local_v, new_version: target_version, timestamp: nowIso(), node_id: node_id || null });
 
   if (!AUTO_UPGRADE_ENABLED) {
     // Still surface upgrade_needed, but do not apply.
@@ -338,11 +394,20 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
   await appendJsonl(historyPath, { ok: true, event: 'UPGRADE_APPLY_STARTED', ts: nowIso(), node_id: node_id || null, from: prev_version, to: target_version }).catch(() => {});
   log('UPGRADE_APPLY_STARTED', { node_id: node_id || null, local_version: prev_version, target_version, retry_count: applying.retry_count });
 
+  let backup_dir = null;
   try {
+    log('NODE_UPGRADE_STARTED', { previous_version: prev_version, new_version: target_version, timestamp: nowIso(), node_id: node_id || null });
+
+    const backupRes = await backupCriticalFiles({ ws, dataDir, node_id, target_version });
+    backup_dir = backupRes.ok ? backupRes.backup_dir : null;
+
     await execOk('git', ['fetch', '--tags', 'origin'], { cwd: ws, timeoutMs: 120000 });
     await execOk('git', ['checkout', '-f', target_version], { cwd: ws, timeoutMs: 120000 });
     await execOk('npm', ['install'], { cwd: ws, timeoutMs: 300000 });
     await clearDerivedCaches(ws);
+
+    // restore local state (must not be overwritten by code checkout)
+    await restoreCriticalFiles({ dataDir, node_id, target_version, backup_dir });
 
     // Post-upgrade health check (in-process)
     const hc = await postUpgradeHealthCheck({ ws });
@@ -352,6 +417,7 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
     await writeJsonAtomic(upgradeStatePath, done).catch(() => {});
     await appendJsonl(historyPath, { ok: true, event: 'UPGRADE_APPLY_OK', ts: nowIso(), node_id: node_id || null, from: prev_version, to: target_version }).catch(() => {});
     log('UPGRADE_APPLY_OK', { node_id: node_id || null, local_version: prev_version, target_version });
+    log('NODE_UPGRADE_COMPLETED', { previous_version: prev_version, new_version: target_version, timestamp: nowIso(), node_id: node_id || null });
 
     // Controlled restart (systemd will respawn daemon)
     process.exit(0);
@@ -361,6 +427,7 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
     await writeJsonAtomic(upgradeStatePath, failedState).catch(() => {});
     await appendJsonl(historyPath, { ok: false, event: 'UPGRADE_APPLY_FAILED', ts: nowIso(), node_id: node_id || null, from: prev_version, to: target_version, error: err }).catch(() => {});
     log('UPGRADE_APPLY_FAILED', { node_id: node_id || null, local_version: prev_version, target_version, retry_count: failedState.retry_count, error: err });
+    log('NODE_UPGRADE_FAILED', { previous_version: prev_version, new_version: target_version, timestamp: nowIso(), node_id: node_id || null });
 
     // Rollback
     const rolling = { ...failedState, state: 'rollback' };
@@ -370,6 +437,10 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
       await execOk('git', ['checkout', '-f', prev_ref], { cwd: ws, timeoutMs: 120000 });
       await execOk('npm', ['install'], { cwd: ws, timeoutMs: 300000 });
       await clearDerivedCaches(ws);
+
+      // restore local state after rollback
+      await restoreCriticalFiles({ dataDir, node_id, target_version: prev_version, backup_dir });
+
       const hc2 = await postUpgradeHealthCheck({ ws });
       if (!hc2.ok) throw Object.assign(new Error('ROLLBACK_HEALTHCHECK_FAILED'), { code: hc2.error?.code || 'ROLLBACK_HEALTHCHECK_FAILED' });
 
@@ -377,6 +448,7 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
       await writeJsonAtomic(upgradeStatePath, rbOk).catch(() => {});
       await appendJsonl(historyPath, { ok: true, event: 'UPGRADE_ROLLBACK_OK', ts: nowIso(), node_id: node_id || null, back_to: prev_ref }).catch(() => {});
       log('UPGRADE_ROLLBACK_OK', { node_id: node_id || null, back_to: prev_ref, back_to_version: prev_version });
+      log('NODE_UPGRADE_ROLLED_BACK', { previous_version: target_version, new_version: prev_version, timestamp: nowIso(), node_id: node_id || null });
       process.exit(0);
     } catch (e2) {
       const err2 = { code: String(e2?.code || 'ROLLBACK_FAILED'), message: String(e2?.message || e2) };
