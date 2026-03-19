@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { appendStrategyEvent, appendStrategyEvaluation } from '../analytics/strategyTimeline.mjs';
 import { findImitationCandidate, applyImitationSuggestionToParams } from './imitation.mjs';
+import { appendImitationReference, appendImitationEvaluation } from '../analytics/learningNetwork.mjs';
 
 function nowIso(nowMs = Date.now()) {
   return new Date(nowMs).toISOString();
@@ -165,6 +166,25 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
             },
             { dataDir }
           ).catch(() => {});
+
+          if (st.last_adjustment_source === 'imitation_hint' || st.imitation_reference) {
+            appendImitationEvaluation(
+              {
+                super_identity_id: sid,
+                linked_event_id: st.pending_evaluation?.linked_event_id || null,
+                result,
+                before_reward: baseline,
+                after_reward: current,
+                decision: 'rolled_back',
+                context: {
+                  candidate_strategy_type: st.imitation_reference?.candidate_strategy_type || null,
+                  candidate_reference_sid: null,
+                  reward_delta: Number(current) - Number(baseline)
+                }
+              },
+              { dataDir }
+            ).catch(() => {});
+          }
         } catch {}
 
         return { ok: true, action: 'rollback', state: rolled };
@@ -188,6 +208,25 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
           },
           { dataDir }
         ).catch(() => {});
+
+        if (st.last_adjustment_source === 'imitation_hint' || st.imitation_reference) {
+          appendImitationEvaluation(
+            {
+              super_identity_id: sid,
+              linked_event_id: st.pending_evaluation?.linked_event_id || null,
+              result,
+              before_reward: baseline,
+              after_reward: current,
+              decision: 'kept',
+              context: {
+                candidate_strategy_type: st.imitation_reference?.candidate_strategy_type || null,
+                candidate_reference_sid: null,
+                reward_delta: Number(current) - Number(baseline)
+              }
+            },
+            { dataDir }
+          ).catch(() => {});
+        }
       } catch {}
 
       return { ok: true, action: 'evaluation_cleared', state: cleared };
@@ -378,6 +417,52 @@ export function evaluateAndEvolveStrategy({ sid, dataDir, nowMs } = {}) {
       },
       { dataDir }
     ).catch(() => {});
+
+    // learning ledger (observability only)
+    if (last_adjustment_source === 'imitation_hint') {
+      let sugType = 'task_weight_up';
+      if (adjType === 'threshold_up' || adjType === 'threshold_down') sugType = adjType;
+      else {
+        const tKeys = new Set([...Object.keys(cur.task_weights || {}), ...Object.keys(proposed.task_weights || {})]);
+        let taskChanged = false;
+        for (const k of tKeys) {
+          const d = Number(proposed.task_weights?.[k] ?? 1) - Number(cur.task_weights?.[k] ?? 1);
+          if (d !== 0) {
+            taskChanged = true;
+            sugType = d >= 0 ? 'task_weight_up' : 'task_weight_down';
+            break;
+          }
+        }
+        if (!taskChanged) {
+          const cKeys = new Set([...Object.keys(cur.channel_weights || {}), ...Object.keys(proposed.channel_weights || {})]);
+          for (const k of cKeys) {
+            const d = Number(proposed.channel_weights?.[k] ?? 1) - Number(cur.channel_weights?.[k] ?? 1);
+            if (d !== 0) {
+              sugType = d >= 0 ? 'channel_weight_up' : 'channel_weight_down';
+              break;
+            }
+          }
+        }
+      }
+
+      appendImitationReference(
+        {
+          super_identity_id: sid,
+          source: {
+            type: 'imitation_hint',
+            candidate_strategy_type: imitation_reference?.candidate_strategy_type || null,
+            candidate_reference_sid: null
+          },
+          context: {
+            linked_strategy_timeline_event_id: linked_event_id,
+            local_strategy_type_before: profile?.strategy_type || null,
+            suggested_adjustment: { type: sugType, delta: Number(adjDelta || 0) },
+            reason
+          }
+        },
+        { dataDir }
+      ).catch(() => {});
+    }
   } catch {}
 
   return { ok: true, action: 'applied', state: next };
