@@ -5,6 +5,7 @@ import { appendOfferFeedEvent, rebuildMarketMetrics } from './offerFeed.mjs';
 import { shouldAcceptOffer } from './offerDecision.mjs';
 import { emitValueForTaskSuccess, getValue } from '../value/value.mjs';
 import { emitReputationEvent } from '../reputation/reputation.mjs';
+import { creditReward } from '../reward/reward.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -311,13 +312,36 @@ export async function attemptPickupOffers({
     } catch {}
 
     const targetSid = o.source_super_identity_id;
+    let valueOut = null;
     if (typeof targetSid === 'string' && targetSid.startsWith('sid-')) {
-      emitValueForTaskSuccess({
+      valueOut = emitValueForTaskSuccess({
         super_identity_id: targetSid,
         context: { source_sid: 'system', expected_value: o.expected_value, offer_id: o.offer_id, task_type: o.task_type },
         dataDir
       });
     }
+
+    // Settlement/reward realization: credit winner (node_super_identity_id) by FINAL value amount (>0), once.
+    try {
+      const winnerSid = node_super_identity_id;
+      const amt = valueOut?.event?.value;
+      if (typeof winnerSid === 'string' && winnerSid.startsWith('sid-') && Number(amt) > 0) {
+        creditReward(
+          {
+            super_identity_id: winnerSid,
+            amount: Number(amt),
+            context: {
+              offer_id: o.offer_id,
+              task_id: o.task_type,
+              value_event_id: valueOut?.event?.event_id || null,
+              source_super_identity_id: targetSid,
+              metadata: { pickup: true }
+            }
+          },
+          { dataDir }
+        );
+      }
+    } catch {}
 
     try {
       process.stdout.write(`${JSON.stringify({ ok: true, event: 'OFFER_EXECUTION_WON', ts: nowIso(), offer_id: o.offer_id })}\n`);
