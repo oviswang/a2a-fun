@@ -11,6 +11,7 @@ function expectStandard(m) {
   assert.ok(m.channel.length > 0);
   assert.equal(typeof m.agent_id === 'string' || m.agent_id === null, true);
   assert.equal(typeof m.session_id === 'string' || m.session_id === null, true);
+  assert.equal(typeof m.super_identity_id === 'string' || m.super_identity_id === null, true);
   assert.equal(typeof m.text, 'string');
   assert.equal(typeof m.metadata, 'object');
 }
@@ -33,6 +34,7 @@ test('message_normalization: each adapter produces StandardMessage', () => {
     assert.equal(bound.channel, ch);
     assert.ok(bound.agent_id);
     assert.ok(bound.session_id);
+    assert.ok(bound.super_identity_id);
   }
 });
 
@@ -45,10 +47,14 @@ test('execution_bridge: ping works across channels', async () => {
 });
 
 test('intent_task_mapping: runtime_status works', async () => {
-  const res = await a2aCoreHandleMessage({ user_id: 'u1', channel: 'telegram', text: '帮我检查状态', metadata: {} });
+  const a = getAdapter('telegram');
+  const std = a.normalize({ user_id: 'u1', text: '帮我检查状态' });
+  const bound = a.bindIdentity(std);
+  const res = await a.execute(bound);
   assert.equal(res.status, 'ok');
   assert.ok(res.result.node_id);
   assert.ok(res.result.local_agent_id);
   assert.ok(res.result.agent_id);
   assert.ok(res.result.session_id);
+  assert.ok(res.result.super_identity_id);
 });

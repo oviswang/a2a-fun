@@ -1,6 +1,7 @@
 import { normalizeStandardMessage } from '../core/standardMessage.mjs';
 import { a2aCoreHandleMessage } from '../core/a2aCore.mjs';
 import { bindChannelUserToAgentId } from '../identity/identityBinding.mjs';
+import { resolveSuperIdentityId } from '../identity/superIdentity.mjs';
 
 function nowMs() {
   return Date.now();
@@ -35,11 +36,15 @@ export function createCAPAdapter({ channel, normalize, formatResponse } = {}) {
       // session_id is required by contract; default deterministically if adapter didn't provide.
       const session_id = m.session_id || `${m.channel}:${m.user_id}`;
 
-      // agent_id must be stable across channels. We use the shared binder (node_id based) and store mapping.
+      // agent_id is stable per-channel identity (backward compat for existing mapping).
       const b = bindChannelUserToAgentId({ channel: m.channel, user_id: m.user_id });
       const agent_id = b?.agent_id || m.agent_id || null;
 
-      return { ...m, agent_id, session_id };
+      // super_identity_id is the cross-channel long-lived human identity.
+      const sid = resolveSuperIdentityId({ channel: m.channel, user_id: m.user_id });
+      const super_identity_id = sid?.ok ? sid.super_identity_id : null;
+
+      return { ...m, agent_id, session_id, super_identity_id };
     },
 
     async execute(message) {

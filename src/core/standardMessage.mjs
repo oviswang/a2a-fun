@@ -14,6 +14,7 @@ function isPlainObject(v) {
  *   user_id: string,
  *   agent_id: string,     // stable A2A agent id for this user (cross-channel)
  *   session_id: string,   // stable per channel session/thread/conversation id
+ *   super_identity_id: string, // long-lived cross-channel identity id (sid-...)
  *   channel: string,
  *   text: string,
  *   metadata: object
@@ -25,6 +26,7 @@ export function normalizeStandardMessage(msg) {
   const user_id = typeof msg.user_id === 'string' ? msg.user_id.trim() : '';
   const agent_id = typeof msg.agent_id === 'string' ? msg.agent_id.trim() : '';
   const session_id = typeof msg.session_id === 'string' ? msg.session_id.trim() : '';
+  const super_identity_id = typeof msg.super_identity_id === 'string' ? msg.super_identity_id.trim() : '';
   const channel = typeof msg.channel === 'string' ? msg.channel.trim() : '';
   const text = typeof msg.text === 'string' ? msg.text : '';
   const metadata = isPlainObject(msg.metadata) ? msg.metadata : {};
@@ -39,6 +41,7 @@ export function normalizeStandardMessage(msg) {
     user_id,
     agent_id: agent_id || null,
     session_id: session_id || null,
+    super_identity_id: super_identity_id || null,
     channel,
     text: cleaned,
     metadata

@@ -37,6 +37,7 @@ async function executeTask({ task, args, context } = {}) {
       local_agent_id: context?.local_agent_id || null,
       agent_id: context?.agent_id || null,
       session_id: context?.session_id || null,
+      super_identity_id: context?.super_identity_id || null,
       channel: context?.channel || null,
       user_id: context?.user_id || null
     });
@@ -83,6 +84,7 @@ export async function a2aCoreHandleMessage(standardMsg) {
     local_agent_id,
     agent_id,
     session_id,
+    super_identity_id: msg.super_identity_id || null,
     channel: msg.channel,
     user_id: msg.user_id,
     metadata: msg.metadata
