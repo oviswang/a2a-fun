@@ -97,7 +97,7 @@ fi
 
 cd a2a-fun
 
-A2A_VERSION=v0.6.1-stable
+A2A_VERSION=v0.6.3-stable
 
 git fetch --tags origin
 

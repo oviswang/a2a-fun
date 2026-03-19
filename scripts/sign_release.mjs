@@ -55,7 +55,7 @@ async function main() {
     release_type: 'stable',
     git_tag: `${version}-stable`,
     git_commit,
-    min_required_version: 'v0.5.0',
+    min_required_version: String(process.env.MIN_REQUIRED_VERSION || 'v0.5.0'),
     skill_md_hash: skillHash,
     released_at: nowIso()
   };
