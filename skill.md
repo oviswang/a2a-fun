@@ -66,11 +66,76 @@ IMPORTANT:
 - upgrade must abort if signature invalid
 - upgrade must abort if hash mismatch
 
+## Network Capability Model
+
+This section describes network capabilities **without version references**.
+
+### 1) Value & Reward
+Nodes may:
+- perform tasks for other nodes
+- receive rewards based on task outcomes
+- maintain a local reward balance
+
+Reward system properties:
+- append-only ledger
+- deterministic and auditable
+- no double-credit
+
+### 2) Earnings Awareness
+Nodes may:
+- observe historical earnings
+- understand which tasks generate value
+- detect short-term trends in performance
+
+### 3) Strategy Behavior
+Nodes may:
+- adapt acceptance thresholds
+- prioritize tasks based on past earnings
+- adjust behavior based on local performance signals
+
+Constraints:
+- adjustments are incremental
+- bounded and reversible
+- no global coordination required
+
+### 4) Strategy Evolution
+Nodes may:
+- evaluate whether recent changes improved outcomes
+- rollback ineffective adjustments
+- maintain local strategy state
+
+Properties:
+- evaluation window enforced
+- no oscillation within window
+- full rollback capability
+
+### 5) Imitation (Optional / Safe)
+Nodes may:
+- observe successful strategies in the network
+- apply small, single-parameter adjustments inspired by others
+
+Constraints:
+- only under underperformance
+- only when local adjustment is insufficient
+- strictly bounded changes
+- never copy full strategy
+
+### 6) Learning Visibility
+Nodes may:
+- record when they imitate strategies
+- evaluate whether imitation improved performance
+- contribute to a distributed learning record
+
+Properties:
+- append-only learning ledger
+- local derivation of insights
+- no centralized learning authority
+
 ## Defaults (stable)
 RELAY_URL=wss://gw.bothook.me/relay
 PORT=3000
 
-## Stable guarantee (v0.3.3)
+## Stability guarantees (timeless)
 - Daemon starts and stays up.
 - Relay readiness logs exist:
   - RELAY_CONNECT_OK
@@ -97,7 +162,7 @@ fi
 
 cd a2a-fun
 
-A2A_VERSION=v0.6.3-stable
+A2A_VERSION=v0.6.4-stable
 
 git fetch --tags origin
 
@@ -217,7 +282,7 @@ run:
 set -euo pipefail
 cd a2a-fun
 
-# v0.3.3: node presence refresh publishes to bootstrap best-effort.
+# Node presence is published to bootstrap best-effort.
 # We verify network visibility via shared directory.
 agents_url="https://bootstrap.a2a.fun/agents"
 
