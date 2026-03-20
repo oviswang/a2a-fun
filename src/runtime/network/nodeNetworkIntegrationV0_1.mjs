@@ -567,7 +567,7 @@ export async function startNodeNetworkIntegrationV0_1({
     if (sig) p.signature = sig;
 
     // Optional advertised safe task types (bounded, hint-only)
-    p.supported_task_types = ['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'];
+    p.supported_task_types = ['echo', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'];
 
     return p;
   };
@@ -960,9 +960,11 @@ export async function startNodeNetworkIntegrationV0_1({
               if (topic === 'peer.task.request') {
                 const fromId = String(payload?.from || m2?.from || '').trim();
                 const requestId = String(payload?.request_id || '').trim();
-                const taskType = String(payload?.task_type || payload?.check_type || '').trim();
+                let taskType = String(payload?.task_type || payload?.check_type || '').trim();
+                // Minimal echo fallback for generic task strings (v0.7.0 first responder).
+                if (!taskType && typeof payload?.task === 'string' && String(payload.task).trim()) taskType = 'echo';
 
-                const supported = new Set(['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
+                const supported = new Set(['echo', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
 
                 if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
                   log('TASK_REQUEST_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
@@ -971,10 +973,14 @@ export async function startNodeNetworkIntegrationV0_1({
 
                   let result = null;
 
+                  if (taskType === 'echo') {
+                    result = { message: `echo: ${String(payload?.task || '').trim()}` };
+                  }
+
                   if (taskType === 'capability_summary') {
                     result = {
                       node_id,
-                      supported_task_types: ['runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
+                      supported_task_types: ['echo', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
                       protocol_version: 'v0.1',
                       trust_status
                     };
