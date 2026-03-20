@@ -252,6 +252,20 @@ export async function runLoop({
    await runAutoRecoveryCheck({ workspace_path: ws, holder: h, state, state_path, checkEveryMinutes: 10 }).catch(() => null);
   }
  } catch {}
+
+ // STABILIZATION_SIGNALS_V0_6_6 (observability-only): periodic actionable logs (best-effort; no remediation)
+ try {
+  if (daemon) {
+   const last = state.last_stabilization_signal_at ? Date.parse(state.last_stabilization_signal_at) : 0;
+   const due = !last || !Number.isFinite(last) || (Date.now() - last) >= 10 * 60 * 1000;
+   if (due) {
+    state.last_stabilization_signal_at = nowIso();
+    const node_id = String(process.env.NODE_ID || process.env.A2A_AGENT_ID || '').trim() || h;
+    const { emitStabilizationSignalsV0_6_6 } = await import('./stabilizationSignalsV0_6_6.mjs');
+    await emitStabilizationSignalsV0_6_6({ workspace_path: ws, node_id }).catch(() => null);
+   }
+  }
+ } catch {}
  
  // JOIN_NETWORK_SIGNAL_V1: announce first successful join (best-effort) 
  try { 
