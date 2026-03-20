@@ -143,7 +143,23 @@ async function connectOnce({ relayUrl, index, attempt }) {
         S.reconnect_timer = null;
 
         S.activeWs = ws;
-        log('RELAY_REGISTER_OK', { node_id: S.node_id, relay_url: relayUrl });
+        // v0.8.4: relay may include bounded peer hints in REGISTER_ACK (additive)
+        try {
+          const peers = Array.isArray(msg?.peers) ? msg.peers : [];
+          log('RELAY_REGISTER_OK', { node_id: S.node_id, relay_url: relayUrl, peer_hint_count: peers.length });
+          if (peers.length) {
+            dispatchDeliver({
+              node_id: S.node_id,
+              from: 'relay',
+              to: S.node_id,
+              message_id: `relay_peer_hints:${Date.now()}`,
+              topic: 'relay.peer_hints',
+              payload: { peers, relay_url: relayUrl, ts: nowIso() }
+            });
+          }
+        } catch {
+          log('RELAY_REGISTER_OK', { node_id: S.node_id, relay_url: relayUrl });
+        }
 
         // runtime receive loop
         ws.onmessage = (ev2) => {

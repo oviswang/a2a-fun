@@ -296,7 +296,27 @@ export function createRelayCoreV0_1({ bindHost = '0.0.0.0', port = 18884, wsPath
             });
             socketToNode.set(socket, node_id);
 
-            writeWsText(socket, { type: 'REGISTER_ACK', to: node_id, accepted: true });
+            // v0.8.4 (additive): include bounded peer hints for cold-start discovery bootstrap.
+            const peers = [];
+            try {
+              const now = Date.now();
+              const maxPeers = Math.max(0, Math.min(20, Number(process.env.RELAY_REGISTER_ACK_PEERS_MAX || 20)));
+              if (maxPeers > 0) {
+                const entries = Array.from(conns.entries())
+                  .filter(([id]) => id && id !== node_id)
+                  .map(([id, v]) => ({ node_id: id, lastSeenMs: Number(v?.lastSeenMs || now) }));
+                entries.sort((a, b) => b.lastSeenMs - a.lastSeenMs);
+                for (const e of entries.slice(0, maxPeers)) {
+                  peers.push({
+                    node_id: e.node_id,
+                    last_seen_ts: new Date(e.lastSeenMs).toISOString(),
+                    status: 'connected'
+                  });
+                }
+              }
+            } catch {}
+
+            writeWsText(socket, { type: 'REGISTER_ACK', to: node_id, accepted: true, peers });
             log('RELAY_REGISTER_OK', {
               node_id,
               conn_id: metaNew.conn_id || null,
