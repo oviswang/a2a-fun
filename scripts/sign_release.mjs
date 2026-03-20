@@ -53,7 +53,7 @@ async function main() {
     version,
     channel: 'stable',
     release_type: 'stable',
-    git_tag: `${version}-stable`,
+    git_tag: `${version}`, // tag name must align with A2A_VERSION in skill.md (no -stable suffix)
     git_commit,
     min_required_version: String(process.env.MIN_REQUIRED_VERSION || 'v0.5.0'),
     skill_md_hash: skillHash,
