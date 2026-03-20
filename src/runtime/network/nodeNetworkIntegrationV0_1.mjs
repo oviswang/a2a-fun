@@ -964,10 +964,12 @@ export async function startNodeNetworkIntegrationV0_1({
                 // Minimal echo fallback for generic task strings (v0.7.0 first responder).
                 if (!taskType && typeof payload?.task === 'string' && String(payload.task).trim()) taskType = 'echo';
 
-                const supported = new Set(['echo', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
+                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'simple_search', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
 
                 if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
-                  log('TASK_REQUEST_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
+                  log('TASK_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
+                  const execStartMs = Date.now();
+                  log('TASK_EXECUTION_STARTED', { node_id, responder_id: node_id, from: fromId, request_id: requestId, task_type: taskType });
 
                   const trust_status = (process.env.AGENT_SIGNATURE && process.env.AGENT_PUBLIC_KEY) ? 'VERIFIED' : 'UNVERIFIED';
 
@@ -977,10 +979,57 @@ export async function startNodeNetworkIntegrationV0_1({
                     result = { message: `echo: ${String(payload?.task || '').trim()}` };
                   }
 
+                  if (taskType === 'summarize_text') {
+                    const text = String(payload?.payload?.text ?? payload?.task ?? '').trim();
+                    const maxLen = Math.max(50, Math.min(1200, Number(payload?.payload?.max_len || 400) || 400));
+                    const clipped = text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
+                    const words = text ? text.split(/\s+/).filter(Boolean).length : 0;
+                    result = {
+                      summary: clipped,
+                      input_chars: text.length,
+                      word_count: words,
+                      clipped: text.length > maxLen
+                    };
+                  }
+
+                  if (taskType === 'decision_help') {
+                    const question = String(payload?.payload?.question ?? payload?.task ?? '').trim();
+                    const optionsRaw = payload?.payload?.options;
+                    const options = Array.isArray(optionsRaw) ? optionsRaw.map((x) => String(x).trim()).filter(Boolean).slice(0, 10) : [];
+                    result = {
+                      question: question || null,
+                      options,
+                      recommendation: options.length ? options[0] : null,
+                      reasoning: options.length ? 'Defaulting to first option (minimal decision helper; no external context).' : 'No options provided.'
+                    };
+                  }
+
+                  if (taskType === 'code_exec_safe') {
+                    // Safety: only allow basic arithmetic expressions.
+                    const expr = String(payload?.payload?.expression ?? payload?.task ?? '').trim();
+                    const ok = /^[0-9\s+\-*/().]+$/.test(expr) && expr.length > 0 && expr.length <= 200;
+                    if (!ok) {
+                      result = { status: 'unsupported', reason: 'Only basic arithmetic expressions are allowed.' };
+                    } else {
+                      let value = null;
+                      try {
+                        // eslint-disable-next-line no-new-func
+                        value = Function(`"use strict"; return (${expr});`)();
+                      } catch {
+                        value = null;
+                      }
+                      result = { expression: expr, value };
+                    }
+                  }
+
+                  if (taskType === 'simple_search') {
+                    result = { status: 'unsupported', reason: 'Search provider not configured on responder node.' };
+                  }
+
                   if (taskType === 'capability_summary') {
                     result = {
                       node_id,
-                      supported_task_types: ['echo', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
+                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'simple_search', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
                       protocol_version: 'v0.1',
                       trust_status
                     };
@@ -1041,7 +1090,33 @@ export async function startNodeNetworkIntegrationV0_1({
                     }
                   }
 
-                  const resp = { request_id: requestId, status: 'ok', from: node_id, ts: nowIso(), result, task_type: taskType };
+                  const durationMs = Date.now() - execStartMs;
+                  const resultSummary = (() => {
+                    try {
+                      if (taskType === 'echo') return String(result?.message || '').slice(0, 120);
+                      if (taskType === 'summarize_text') return String(result?.summary || '').slice(0, 120);
+                      if (taskType === 'decision_help') return String(result?.recommendation || '').slice(0, 120);
+                      if (taskType === 'code_exec_safe') return `value=${String(result?.value)}`;
+                      if (taskType === 'simple_search') return String(result?.reason || 'unsupported').slice(0, 120);
+                      return 'ok';
+                    } catch {
+                      return 'ok';
+                    }
+                  })();
+
+                  log('TASK_EXECUTION_COMPLETED', { node_id, responder_id: node_id, request_id: requestId, task_type: taskType, duration_ms: durationMs, result_summary: resultSummary });
+
+                  const statusOut = (taskType === 'simple_search' || (taskType === 'code_exec_safe' && result?.status === 'unsupported')) ? 'unsupported' : 'success';
+                  const resp = {
+                    request_id: requestId,
+                    status: statusOut,
+                    from: node_id,
+                    ts: nowIso(),
+                    task_type: taskType,
+                    execution_time_ms: durationMs,
+                    summary: `Task handled by ${node_id} in ${durationMs}ms`,
+                    result
+                  };
                   const out = send({ to: fromId, topic: 'peer.task.response', payload: resp, message_id: requestId });
                   log('TASK_RESPONSE_SENT', { node_id, to: fromId, request_id: requestId, task_type: taskType, ok: out.ok, ts: resp.ts });
                   return;
