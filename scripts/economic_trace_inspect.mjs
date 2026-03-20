@@ -28,6 +28,8 @@ function readJsonlTail(p, maxLines = 5000) {
 function parseArgs(argv) {
   const out = {
     human: false,
+    with_backfill: false,
+    show_confidence: false,
     offer_id: null,
     value_event_id: null,
     reward_event_id: null,
@@ -38,6 +40,8 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--human') out.human = true;
+    else if (a === '--with-backfill') out.with_backfill = true;
+    else if (a === '--show-confidence') out.show_confidence = true;
     else if (a === '--offer-id') out.offer_id = String(argv[++i] || '').trim() || null;
     else if (a === '--value-event-id') out.value_event_id = String(argv[++i] || '').trim() || null;
     else if (a === '--reward-event-id') out.reward_event_id = String(argv[++i] || '').trim() || null;
@@ -47,9 +51,16 @@ function parseArgs(argv) {
   return out;
 }
 
-function humanPrint(trace) {
+function humanPrint(trace, { showConfidence = false } = {}) {
   const s = trace?.summary;
   const k = s?.trace_keys || {};
+
+  const extra = [];
+  if (showConfidence) {
+    extra.push(`- trace_status: ${trace?.trace_status || 'n/a'}`);
+    extra.push(`- inferred_links_used: ${String(!!trace?.inferred_links_used)}`);
+    extra.push(`- confidence: ${trace?.confidence || 'n/a'}`);
+  }
 
   const lines = [
     'Economic Trace Inspect (v0.6.8)',
@@ -63,29 +74,39 @@ function humanPrint(trace) {
     `- missing: ${(s?.missing || []).join(', ') || 'none'}`
   ];
 
-  process.stdout.write(lines.join('\n') + '\n');
+  process.stdout.write([...lines, ...extra].join('\n') + '\n');
 }
 
 async function main() {
   const args = parseArgs(process.argv);
   const ws = process.env.A2A_WORKSPACE_PATH ? String(process.env.A2A_WORKSPACE_PATH).trim() : process.cwd();
 
+  const backfill = (() => {
+    if (!args.with_backfill) return null;
+    try {
+      const raw = fs.readFileSync(path.join(ws, 'data', 'trace_backfill.json'), 'utf8');
+      return JSON.parse(String(raw || ''));
+    } catch {
+      return null;
+    }
+  })();
+
   // Single-trace modes
   if (args.offer_id) {
-    const t = traceEconomicPathByOffer(args.offer_id, { dataDir: path.join(ws, 'data') });
-    if (args.human) return void humanPrint(t);
+    const t = traceEconomicPathByOffer(args.offer_id, { dataDir: path.join(ws, 'data'), backfill });
+    if (args.human) return void humanPrint(t, { showConfidence: args.show_confidence });
     return void process.stdout.write(JSON.stringify(t, null, 2) + '\n');
   }
 
   if (args.value_event_id) {
-    const t = traceEconomicPathByValueEvent(args.value_event_id, { dataDir: path.join(ws, 'data') });
-    if (args.human) return void humanPrint(t);
+    const t = traceEconomicPathByValueEvent(args.value_event_id, { dataDir: path.join(ws, 'data'), backfill });
+    if (args.human) return void humanPrint(t, { showConfidence: args.show_confidence });
     return void process.stdout.write(JSON.stringify(t, null, 2) + '\n');
   }
 
   if (args.reward_event_id) {
-    const t = traceEconomicPathByRewardEvent(args.reward_event_id, { dataDir: path.join(ws, 'data') });
-    if (args.human) return void humanPrint(t);
+    const t = traceEconomicPathByRewardEvent(args.reward_event_id, { dataDir: path.join(ws, 'data'), backfill });
+    if (args.human) return void humanPrint(t, { showConfidence: args.show_confidence });
     return void process.stdout.write(JSON.stringify(t, null, 2) + '\n');
   }
 
@@ -96,7 +117,7 @@ async function main() {
     const events = readJsonlTail(rewardLedger, 200000).filter((e) => e?.event_type === 'reward_credit' && e?.super_identity_id === sid);
     const last = events.slice(-Math.max(1, Number(args.recent) || 5));
 
-    const traces = last.map((ev) => traceEconomicPathByRewardEvent(ev.event_id, { dataDir: path.join(ws, 'data') }));
+    const traces = last.map((ev) => traceEconomicPathByRewardEvent(ev.event_id, { dataDir: path.join(ws, 'data'), backfill }));
 
     const out = { ok: true, mode: 'sid_recent', sid, recent: last.length, traces };
     if (!args.human) return void process.stdout.write(JSON.stringify(out, null, 2) + '\n');

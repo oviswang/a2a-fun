@@ -154,7 +154,37 @@ export function emitValueForTaskSuccess({
   const ctx = isPlainObject(context) ? context : {};
   const source_sid = String(ctx.source_sid || 'system');
   const target_sid = sid;
-  const offer_id = typeof ctx.offer_id === 'string' && ctx.offer_id.trim() ? ctx.offer_id.trim() : null;
+  let offer_id = typeof ctx.offer_id === 'string' && ctx.offer_id.trim() ? ctx.offer_id.trim() : null;
+
+  // Forward trace completeness (v0.6.9): ensure required trace keys exist on write.
+  // Never block value emission (no economic behavior change), but never be silent.
+  const missingTraceKeys = [];
+  if (!offer_id) missingTraceKeys.push('offer_id');
+  const task_id = typeof ctx.task_id === 'string' && ctx.task_id.trim() ? ctx.task_id.trim() : (typeof ctx.task_type === 'string' ? String(ctx.task_type) : null);
+  if (!task_id) missingTraceKeys.push('task_id');
+  const winner_super_identity_id = typeof ctx.winner_sid === 'string' && ctx.winner_sid.trim() ? ctx.winner_sid.trim() : (typeof ctx.source_super_identity_id === 'string' && ctx.source_super_identity_id.trim() ? ctx.source_super_identity_id.trim() : null);
+  if (!winner_super_identity_id) missingTraceKeys.push('winner_super_identity_id');
+  const source_super_identity_id = typeof ctx.source_super_identity_id === 'string' && ctx.source_super_identity_id.trim() ? ctx.source_super_identity_id.trim() : null;
+  if (!source_super_identity_id) missingTraceKeys.push('source_super_identity_id');
+
+  if (!offer_id) {
+    // Best-effort synthesized offer id for non-offer contexts. Marked via TRACE_KEY_MISSING_ON_WRITE.
+    offer_id = `offer:local:${crypto.randomUUID()}`;
+  }
+
+  if (missingTraceKeys.length) {
+    logEvent({
+      ok: true,
+      event: 'TRACE_KEY_MISSING_ON_WRITE',
+      ts: nowIso(),
+      stage: 'value_event',
+      offer_id,
+      task_id: task_id || null,
+      winner_super_identity_id: winner_super_identity_id || null,
+      source_super_identity_id: source_super_identity_id || null,
+      missing: missingTraceKeys
+    });
+  }
 
   // Duplicate guard (integrity): avoid emitting multiple value events for the same offer_id+target_sid.
   // IMPORTANT: duplicates must be diagnosable, not silent.
@@ -221,6 +251,9 @@ export function emitValueForTaskSuccess({
     context: {
       ...ctx,
       offer_id,
+      task_id: task_id || null,
+      winner_super_identity_id: winner_super_identity_id || null,
+      source_super_identity_id: source_super_identity_id || null,
       expected_value,
       source_sid,
       target_sid,

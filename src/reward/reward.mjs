@@ -98,6 +98,28 @@ export function creditReward({ super_identity_id, amount, context }, { dataDir }
 
   const offer_id = typeof ctx.offer_id === 'string' ? ctx.offer_id : null;
   const value_event_id = typeof ctx.value_event_id === 'string' ? ctx.value_event_id : null;
+  const task_id = typeof ctx.task_id === 'string' ? ctx.task_id : null;
+
+  // Forward trace completeness (v0.6.9): required keys must be present on reward write.
+  // Never block crediting (no economic behavior change), but never be silent.
+  const missingTraceKeys = [];
+  if (!offer_id) missingTraceKeys.push('offer_id');
+  if (!task_id) missingTraceKeys.push('task_id');
+  if (!value_event_id) missingTraceKeys.push('value_event_id');
+  if (missingTraceKeys.length) {
+    logEvent({
+      ok: true,
+      event: 'TRACE_KEY_MISSING_ON_WRITE',
+      ts: nowIso(),
+      stage: 'reward_credit',
+      offer_id: offer_id || null,
+      task_id: task_id || null,
+      winner_super_identity_id: sid,
+      source_super_identity_id: typeof ctx.source_super_identity_id === 'string' ? ctx.source_super_identity_id : null,
+      value_event_id: value_event_id || null,
+      missing: missingTraceKeys
+    });
+  }
 
   if (alreadyCredited({ ledgerPath, offer_id, winner_sid: sid, value_event_id })) {
     logEvent({

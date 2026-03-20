@@ -156,7 +156,7 @@ function buildIndexes({ dataDir } = {}) {
   };
 }
 
-export function traceEconomicPathByRewardEvent(reward_event_id, { dataDir } = {}) {
+export function traceEconomicPathByRewardEvent(reward_event_id, { dataDir, backfill } = {}) {
   const id = String(reward_event_id || '').trim();
   const idx = buildIndexes({ dataDir });
 
@@ -164,10 +164,30 @@ export function traceEconomicPathByRewardEvent(reward_event_id, { dataDir } = {}
   const ctx = isPlainObject(reward?.context) ? reward.context : {};
 
   const offer_id = typeof ctx.offer_id === 'string' ? ctx.offer_id : null;
-  const value_event_id = typeof ctx.value_event_id === 'string' ? ctx.value_event_id : null;
+  let value_event_id = typeof ctx.value_event_id === 'string' ? ctx.value_event_id : null;
+
+  let inferred_links_used = false;
+  let confidence = null;
+
+  // Backfill assist (v0.6.9): fill missing linkage without rewriting ledgers.
+  if (!value_event_id) {
+    const inf = backfill?.inferred?.by_reward_event_id?.[id];
+    const vid = inf?.linked_ids?.value_event_id;
+    if (typeof vid === 'string' && vid.trim()) {
+      value_event_id = vid.trim();
+      inferred_links_used = true;
+      confidence = inf?.confidence || 'medium';
+    }
+  }
 
   const value = value_event_id ? (idx.valueById.get(value_event_id) || null) : null;
-  const offer = offer_id ? (idx.offerById.get(offer_id) || null) : null;
+  let offer = offer_id ? (idx.offerById.get(offer_id) || null) : null;
+  const inferredOffer = offer_id && !offer ? backfill?.inferred?.by_offer_id?.[offer_id] : null;
+  if (!offer && inferredOffer?.inferred === true) {
+    offer = { offer_id, inferred: true, ...inferredOffer.linked_ids };
+    inferred_links_used = true;
+    confidence = confidence || inferredOffer.confidence || 'low';
+  }
 
   const execSig = offer_id ? (pickLatest(idx.execById.get(offer_id) || []) || null) : null;
   const acceptSig = offer_id ? (pickLatest(idx.acceptById.get(offer_id) || []) || null) : null;
@@ -198,17 +218,32 @@ export function traceEconomicPathByRewardEvent(reward_event_id, { dataDir } = {}
   };
 
   trace.summary = summarizeEconomicTrace(trace);
+  trace.inferred_links_used = inferred_links_used;
+  trace.confidence = inferred_links_used ? (confidence || 'medium') : 'high';
+  trace.trace_status = trace.summary.status === 'complete'
+    ? (inferred_links_used ? 'inferred_complete' : 'complete')
+    : 'partial';
+
   return trace;
 }
 
-export function traceEconomicPathByValueEvent(value_event_id, { dataDir } = {}) {
+export function traceEconomicPathByValueEvent(value_event_id, { dataDir, backfill } = {}) {
   const id = String(value_event_id || '').trim();
   const idx = buildIndexes({ dataDir });
+
+  let inferred_links_used = false;
+  let confidence = null;
 
   const value = idx.valueById.get(id) || null;
   const offer_id = typeof value?.context?.offer_id === 'string' ? value.context.offer_id : null;
   const reward = pickLatest(idx.rewardByValueId.get(id) || []) || null;
-  const offer = offer_id ? (idx.offerById.get(offer_id) || null) : null;
+  let offer = offer_id ? (idx.offerById.get(offer_id) || null) : null;
+  const inferredOffer = offer_id && !offer ? backfill?.inferred?.by_offer_id?.[offer_id] : null;
+  if (!offer && inferredOffer?.inferred === true) {
+    offer = { offer_id, inferred: true, ...inferredOffer.linked_ids };
+    inferred_links_used = true;
+    confidence = inferredOffer.confidence || 'low';
+  }
 
   const execSig = offer_id ? (pickLatest(idx.execById.get(offer_id) || []) || null) : null;
   const acceptSig = offer_id ? (pickLatest(idx.acceptById.get(offer_id) || []) || null) : null;
@@ -235,14 +270,29 @@ export function traceEconomicPathByValueEvent(value_event_id, { dataDir } = {}) 
   };
 
   trace.summary = summarizeEconomicTrace(trace);
+  trace.inferred_links_used = inferred_links_used;
+  trace.confidence = inferred_links_used ? (confidence || 'medium') : 'high';
+  trace.trace_status = trace.summary.status === 'complete'
+    ? (inferred_links_used ? 'inferred_complete' : 'complete')
+    : 'partial';
+
   return trace;
 }
 
-export function traceEconomicPathByOffer(offer_id, { dataDir } = {}) {
+export function traceEconomicPathByOffer(offer_id, { dataDir, backfill } = {}) {
   const oid = String(offer_id || '').trim();
   const idx = buildIndexes({ dataDir });
 
-  const offer = idx.offerById.get(oid) || null;
+  let inferred_links_used = false;
+  let confidence = null;
+
+  let offer = idx.offerById.get(oid) || null;
+  const inferredOffer = !offer ? backfill?.inferred?.by_offer_id?.[oid] : null;
+  if (!offer && inferredOffer?.inferred === true) {
+    offer = { offer_id: oid, inferred: true, ...inferredOffer.linked_ids };
+    inferred_links_used = true;
+    confidence = inferredOffer.confidence || 'low';
+  }
   const execSig = pickLatest(idx.execById.get(oid) || []) || null;
   const acceptSig = pickLatest(idx.acceptById.get(oid) || []) || null;
 
@@ -279,5 +329,11 @@ export function traceEconomicPathByOffer(offer_id, { dataDir } = {}) {
   };
 
   trace.summary = summarizeEconomicTrace(trace);
+  trace.inferred_links_used = inferred_links_used;
+  trace.confidence = inferred_links_used ? (confidence || 'medium') : 'high';
+  trace.trace_status = trace.summary.status === 'complete'
+    ? (inferred_links_used ? 'inferred_complete' : 'complete')
+    : 'partial';
+
   return trace;
 }
