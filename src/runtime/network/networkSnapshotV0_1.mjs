@@ -121,22 +121,20 @@ export async function getNetworkSnapshot({
   // IF ALL FAIL
   if (!selfNodeId) selfNodeId = 'unknown (node not initialized)';
 
-  // 2) version
-  let selfVersion = null;
-  // PRIMARY: git HEAD (short)
+  // 2) version (normalized, user-facing)
+  // Use git tag + verified release manifest when available; never surface package.json as primary.
+  let selfVersion = 'unknown';
   try {
-    const rev = String(execSync('git rev-parse --short HEAD', { cwd: ws, stdio: ['ignore', 'pipe', 'ignore'] })).trim();
-    if (rev) selfVersion = rev;
-  } catch {}
-  // SECONDARY: package.json version
-  if (!selfVersion) {
+    const { getNormalizedVersionInfo } = await import('../versionInfo.mjs');
+    const v = await getNormalizedVersionInfo({ workspace_path: ws });
+    if (v?.current_version) selfVersion = String(v.current_version);
+  } catch {
+    // Hard fallback: keep previous behavior, but avoid package.json as primary.
     try {
-      const pkg = await readJsonSafe(path.join(ws, 'package.json'));
-      if (pkg?.version) selfVersion = String(pkg.version);
+      const rev = String(execSync('git rev-parse --short HEAD', { cwd: ws, stdio: ['ignore', 'pipe', 'ignore'] })).trim();
+      if (rev) selfVersion = rev;
     } catch {}
   }
-  // FALLBACK
-  if (!selfVersion) selfVersion = 'unknown';
 
   // 3) country_code
   // PRIMARY: local cached value (presence-cache/runtime/local config)

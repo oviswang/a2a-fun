@@ -80,11 +80,16 @@ async function main() {
   const nodeIdPath = path.join(ws, 'data', 'node_id');
   const selfNodeId = (await readText(nodeIdPath).catch(() => '')).trim() || null;
 
-  // version: prefer env override, else package.json version (informational)
+  // version (normalized): prefer git tag + verified release manifest; never use package.json as primary.
   let version = (process.env.A2A_VERSION || '').trim() || null;
   if (!version) {
-    const pkg = await readJsonSafe(path.join(ws, 'package.json'));
-    if (pkg?.version) version = String(pkg.version);
+    try {
+      const { getNormalizedVersionInfo } = await import('../src/runtime/versionInfo.mjs');
+      const v = await getNormalizedVersionInfo({ workspace_path: ws });
+      version = v?.current_version ? String(v.current_version) : null;
+    } catch {
+      version = null;
+    }
   }
 
   // Relay status from journald for the canonical systemd unit (best-effort)
