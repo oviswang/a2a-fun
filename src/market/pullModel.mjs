@@ -331,7 +331,15 @@ export async function attemptPickupOffers({
     if (typeof targetSid === 'string' && targetSid.startsWith('sid-')) {
       valueOut = emitValueForTaskSuccess({
         super_identity_id: targetSid,
-        context: { source_sid: 'system', expected_value: o.expected_value, offer_id: o.offer_id, task_type: o.task_type },
+        context: {
+          source_sid: 'system',
+          expected_value: o.expected_value,
+          offer_id: o.offer_id,
+          task_id: o.task_type,
+          task_type: o.task_type,
+          winner_sid: node_super_identity_id || null,
+          source_super_identity_id: node_super_identity_id || null
+        },
         dataDir
       });
     }

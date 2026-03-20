@@ -63,6 +63,33 @@ function tailLines(filePath, maxLines = 800) {
   }
 }
 
+function logEvent(obj) {
+  try {
+    process.stdout.write(`${JSON.stringify(obj)}\n`);
+  } catch {}
+}
+
+function findExistingValueEvent({ ledgerPath, offer_id, target_sid } = {}) {
+  const oid = typeof offer_id === 'string' && offer_id.trim() ? offer_id.trim() : null;
+  const sid = typeof target_sid === 'string' && target_sid.trim() ? target_sid.trim() : null;
+  if (!oid || !sid) return null;
+
+  const lines = tailLines(ledgerPath, 2000);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let e;
+    try {
+      e = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (e?.event_type !== 'task_success') continue;
+    if (String(e?.super_identity_id || '') !== sid) continue;
+    const ctx = e?.context || {};
+    if (String(ctx?.offer_id || '') === oid) return e;
+  }
+  return null;
+}
+
 function loadIndex(indexPath) {
   const j = safeReadJson(indexPath);
   if (j && isPlainObject(j) && isPlainObject(j.index)) return j;
@@ -127,14 +154,39 @@ export function emitValueForTaskSuccess({
   const ctx = isPlainObject(context) ? context : {};
   const source_sid = String(ctx.source_sid || 'system');
   const target_sid = sid;
+  const offer_id = typeof ctx.offer_id === 'string' && ctx.offer_id.trim() ? ctx.offer_id.trim() : null;
+
+  // Duplicate guard (integrity): avoid emitting multiple value events for the same offer_id+target_sid.
+  // IMPORTANT: duplicates must be diagnosable, not silent.
+  if (offer_id) {
+    const existing = findExistingValueEvent({ ledgerPath, offer_id, target_sid });
+    if (existing) {
+      logEvent({
+        ok: true,
+        event: 'VALUE_EVENT_SKIPPED',
+        ts: nowIso(),
+        offer_id,
+        task_id: typeof ctx.task_id === 'string' ? ctx.task_id : null,
+        winner_sid: target_sid,
+        source_super_identity_id: typeof ctx.source_super_identity_id === 'string' ? ctx.source_super_identity_id : null,
+        amount: Number(existing?.value ?? 0),
+        reason: 'duplicate_suppressed',
+        stage: 'value',
+        existing_value_event_id: existing?.event_id || null
+      });
+      return { ok: true, emitted: false, reason: 'duplicate_suppressed', existing_event: existing };
+    }
+  }
 
   // base rule: expected_value defaults to 1
-  let base = Number.isFinite(Number(ctx.expected_value)) ? Number(ctx.expected_value) : 1;
+  const expected_value = Number.isFinite(Number(ctx.expected_value)) ? Number(ctx.expected_value) : 1;
+  let base = expected_value;
 
-  // no self-reward
-  if (source_sid === target_sid) base = 0;
+  // anti-gaming: no self-reward
+  const self_reward_blocked = source_sid === target_sid;
+  if (self_reward_blocked) base = 0;
 
-  // reputation multiplier (lightweight)
+  // reputation multiplier (lightweight; must not break value emission)
   const rep = getReputation(target_sid, { dataDir });
   const repScore = rep?.reputation?.score ?? 0;
   const mult = reputationMultiplier(repScore);
@@ -152,6 +204,14 @@ export function emitValueForTaskSuccess({
     rate_limited = true;
   }
 
+  const value_reason = self_reward_blocked
+    ? 'zero_by_rule:self_reward_blocked'
+    : rate_limited
+      ? 'zero_by_rule:rate_limited'
+      : Number(final_value) > 0
+        ? 'positive_value'
+        : 'zero_value';
+
   const ev = {
     event_id: evtId(),
     ts: t,
@@ -160,26 +220,79 @@ export function emitValueForTaskSuccess({
     value: final_value,
     context: {
       ...ctx,
+      offer_id,
+      expected_value,
       source_sid,
       target_sid,
       reputation_score: repScore,
       multiplier: mult,
-      rate_limited
+      rate_limited,
+      self_reward_blocked,
+      value_reason
     }
   };
 
-  appendJsonlLine(ledgerPath, ev);
+  try {
+    appendJsonlLine(ledgerPath, ev);
+  } catch (e) {
+    logEvent({
+      ok: false,
+      event: 'VALUE_EVENT_FAILED',
+      ts: nowIso(),
+      offer_id,
+      task_id: typeof ctx.task_id === 'string' ? ctx.task_id : null,
+      winner_sid: target_sid,
+      amount: Number(final_value || 0),
+      reason: 'append_failed',
+      stage: 'value',
+      error: String(e?.message || e)
+    });
+    return { ok: false, error: { code: 'VALUE_APPEND_FAILED' } };
+  }
 
   // update index
-  const doc = loadIndex(indexPath);
-  const idx = isPlainObject(doc.index) ? doc.index : {};
-  const entry = ensureEntry(idx, target_sid);
-  entry.total_value = Number(entry.total_value || 0) + Number(final_value || 0);
-  entry.event_count = Number(entry.event_count || 0) + 1;
-  entry.last_updated = nowIso();
-  saveIndex(indexPath, idx);
+  try {
+    const doc = loadIndex(indexPath);
+    const idx = isPlainObject(doc.index) ? doc.index : {};
+    const entry = ensureEntry(idx, target_sid);
+    entry.total_value = Number(entry.total_value || 0) + Number(final_value || 0);
+    entry.event_count = Number(entry.event_count || 0) + 1;
+    entry.last_updated = nowIso();
+    saveIndex(indexPath, idx);
+  } catch (e) {
+    // Index failure must be diagnosable but must not hide the value event.
+    logEvent({
+      ok: false,
+      event: 'VALUE_EVENT_FAILED',
+      ts: nowIso(),
+      offer_id,
+      task_id: typeof ctx.task_id === 'string' ? ctx.task_id : null,
+      winner_sid: target_sid,
+      amount: Number(final_value || 0),
+      reason: 'index_update_failed',
+      stage: 'value',
+      value_event_id: ev.event_id,
+      error: String(e?.message || e)
+    });
+  }
 
-  return { ok: true, event: ev };
+  logEvent({
+    ok: true,
+    event: 'VALUE_EVENT_EMITTED',
+    ts: nowIso(),
+    offer_id,
+    task_id: typeof ctx.task_id === 'string' ? ctx.task_id : null,
+    winner_sid: target_sid,
+    source_super_identity_id: typeof ctx.source_super_identity_id === 'string' ? ctx.source_super_identity_id : null,
+    expected_value,
+    amount: Number(final_value || 0),
+    multiplier: mult,
+    reason: value_reason,
+    stage: 'value',
+    value_event_id: ev.event_id
+  });
+
+  return { ok: true, emitted: true, event: ev };
 }
 
 export function getValue(super_identity_id, { dataDir } = {}) {

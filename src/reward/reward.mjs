@@ -24,6 +24,12 @@ function appendJsonlLine(p, obj) {
   fs.appendFileSync(p, JSON.stringify(obj) + '\n', 'utf8');
 }
 
+function logEvent(obj) {
+  try {
+    process.stdout.write(`${JSON.stringify(obj)}\n`);
+  } catch {}
+}
+
 function safeReadJson(p) {
   try {
     const raw = fs.readFileSync(p, 'utf8');
@@ -94,6 +100,18 @@ export function creditReward({ super_identity_id, amount, context }, { dataDir }
   const value_event_id = typeof ctx.value_event_id === 'string' ? ctx.value_event_id : null;
 
   if (alreadyCredited({ ledgerPath, offer_id, winner_sid: sid, value_event_id })) {
+    logEvent({
+      ok: true,
+      event: 'VALUE_TO_REWARD_MISSING',
+      ts: nowIso(),
+      offer_id: offer_id || null,
+      task_id: typeof ctx.task_id === 'string' ? ctx.task_id : null,
+      winner_sid: sid,
+      amount: amt,
+      reason: 'duplicate_credit_suppressed',
+      stage: 'reward',
+      value_event_id: value_event_id || null
+    });
     return { ok: true, credited: false, reason: 'duplicate_credit' };
   }
 
@@ -113,6 +131,35 @@ export function creditReward({ super_identity_id, amount, context }, { dataDir }
   };
 
   appendJsonlLine(ledgerPath, ev);
+
+  // Value→reward traceability (integrity): reward credits must reference a value_event_id.
+  if (value_event_id) {
+    logEvent({
+      ok: true,
+      event: 'VALUE_TO_REWARD_LINKED',
+      ts: nowIso(),
+      offer_id: offer_id || null,
+      task_id: typeof ctx.task_id === 'string' ? ctx.task_id : null,
+      winner_sid: sid,
+      amount: amt,
+      reason: 'reward_credit',
+      stage: 'reward',
+      value_event_id
+    });
+  } else {
+    logEvent({
+      ok: true,
+      event: 'VALUE_TO_REWARD_MISSING',
+      ts: nowIso(),
+      offer_id: offer_id || null,
+      task_id: typeof ctx.task_id === 'string' ? ctx.task_id : null,
+      winner_sid: sid,
+      amount: amt,
+      reason: 'missing_value_event_id',
+      stage: 'reward',
+      value_event_id: null
+    });
+  }
 
   const doc = loadBalance(balancePath);
   const balances = isPlainObject(doc.balances) ? doc.balances : {};
