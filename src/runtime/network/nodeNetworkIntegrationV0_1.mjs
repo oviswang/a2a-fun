@@ -923,6 +923,14 @@ export async function startNodeNetworkIntegrationV0_1({
           // Start peer presence gossip (P2P liveness propagation)
           startPresenceLoop();
 
+          // Auto responder activation (v0.8.2)
+          try {
+            const supportedTaskTypes = ['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'];
+            log('RESPONDER_ENABLED', { node_id, relay_url: relayUrl, supported_task_types: supportedTaskTypes, ts: nowIso() });
+            log('RESPONDER_SUBSCRIBED', { node_id, relay_url: relayUrl, topic: 'peer.task.request', ts: nowIso() });
+            log('RESPONDER_READY', { node_id, relay_url: relayUrl, supported_task_types: supportedTaskTypes, ts: nowIso() });
+          } catch {}
+
           // Start capability gossip (v0.7.6)
           startCapabilitiesLoop();
           try { sendCapabilitiesOnce('after_register'); } catch {}
