@@ -745,7 +745,7 @@ export async function startNodeNetworkIntegrationV0_1({
   const capabilityMap = new Map(); // node_id -> { capabilities: string[], ts: string }
   let capabilitiesTimer = null;
 
-  const localCapabilities = () => ['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'simple_search'];
+  const localCapabilities = () => ['echo', 'summarize_text', 'decision_help', 'code_exec_safe'];
 
   const recordCapability = ({ from, capabilities, ts }) => {
     const node = String(from || '').trim();
@@ -1045,7 +1045,7 @@ export async function startNodeNetworkIntegrationV0_1({
                 // Minimal echo fallback for generic task strings (v0.7.0 first responder).
                 if (!taskType && typeof payload?.task === 'string' && String(payload.task).trim()) taskType = 'echo';
 
-                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'simple_search', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
+                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
 
                 if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
                   log('TASK_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
@@ -1103,14 +1103,11 @@ export async function startNodeNetworkIntegrationV0_1({
                     }
                   }
 
-                  if (taskType === 'simple_search') {
-                    result = { status: 'unsupported', reason: 'Search provider not configured on responder node.' };
-                  }
 
                   if (taskType === 'capability_summary') {
                     result = {
                       node_id,
-                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'simple_search', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
+                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
                       protocol_version: 'v0.1',
                       trust_status
                     };
@@ -1178,7 +1175,6 @@ export async function startNodeNetworkIntegrationV0_1({
                       if (taskType === 'summarize_text') return String(result?.summary || '').slice(0, 120);
                       if (taskType === 'decision_help') return String(result?.recommendation || '').slice(0, 120);
                       if (taskType === 'code_exec_safe') return `value=${String(result?.value)}`;
-                      if (taskType === 'simple_search') return String(result?.reason || 'unsupported').slice(0, 120);
                       return 'ok';
                     } catch {
                       return 'ok';
@@ -1187,7 +1183,7 @@ export async function startNodeNetworkIntegrationV0_1({
 
                   log('TASK_EXECUTION_COMPLETED', { node_id, responder_id: node_id, request_id: requestId, task_type: taskType, duration_ms: durationMs, result_summary: resultSummary });
 
-                  const statusOut = (taskType === 'simple_search' || (taskType === 'code_exec_safe' && result?.status === 'unsupported')) ? 'unsupported' : 'success';
+                  const statusOut = (taskType === 'code_exec_safe' && result?.status === 'unsupported') ? 'unsupported' : 'success';
                   const resp = {
                     request_id: requestId,
                     status: statusOut,
