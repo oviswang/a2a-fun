@@ -740,6 +740,63 @@ export async function startNodeNetworkIntegrationV0_1({
     }, 1000).unref?.();
   };
 
+  // v0.7.6 capability advertisement + cache (lightweight, relay-only)
+  const capabilitiesCachePath = `${dataDir}/capabilities-cache.json`;
+  const capabilityMap = new Map(); // node_id -> { capabilities: string[], ts: string }
+  let capabilitiesTimer = null;
+
+  const localCapabilities = () => ['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'simple_search'];
+
+  const recordCapability = ({ from, capabilities, ts }) => {
+    const node = String(from || '').trim();
+    const caps = Array.isArray(capabilities) ? capabilities.map((x) => String(x).trim()).filter(Boolean).slice(0, 16) : [];
+    const t = String(ts || '').trim() || nowIso();
+    if (!node || !caps.length) return;
+    capabilityMap.set(node, { capabilities: caps, ts: t });
+    // best-effort persistence
+    try {
+      const obj = { ts: nowIso(), nodes: Object.fromEntries(Array.from(capabilityMap.entries())) };
+      void writeJsonAtomic(capabilitiesCachePath, obj).catch(() => {});
+    } catch {}
+  };
+
+  const sendCapabilitiesOnce = (reason = 'periodic') => {
+    const payload = { node_id, capabilities: localCapabilities(), ts: nowIso() };
+
+    // include self in cache
+    try { recordCapability({ from: node_id, capabilities: payload.capabilities, ts: payload.ts }); } catch {}
+
+    const targets = (state.known_peers || []).map((p) => p?.node_id).filter((x) => x && x !== node_id);
+    const ordered = trustAwareOrder(dedupPreserveOrder(targets), { reason: `peer.capabilities:${reason}` });
+
+    let okCount = 0;
+    for (const to of ordered) {
+      const out = send({ to, topic: 'peer.capabilities', payload });
+      if (out.ok) okCount++;
+    }
+
+    log('PEER_CAPABILITIES_SENT', { node_id, peer_count: ordered.length, ok_count: okCount, reason, ts: payload.ts });
+  };
+
+  const startCapabilitiesLoop = () => {
+    if (capabilitiesTimer) return;
+    const everyMs = Number(process.env.CAPABILITIES_GOSSIP_EVERY_MS || 120_000);
+    if (!Number.isFinite(everyMs) || everyMs <= 0) return;
+
+    capabilitiesTimer = setInterval(() => {
+      try {
+        if (state.relay_registered) sendCapabilitiesOnce('periodic');
+      } catch {}
+    }, everyMs);
+    capabilitiesTimer.unref();
+
+    setTimeout(() => {
+      try {
+        if (state.relay_registered) sendCapabilitiesOnce('startup');
+      } catch {}
+    }, 1500).unref?.();
+  };
+
   // Connection guard (single active connection per node_id)
   let connection_state = 'DISCONNECTED'; // CONNECTING|CONNECTED|DISCONNECTED
   let reconnect_backoff_ms = 500; // 500ms → 1s → 2s → 5s cap
@@ -866,6 +923,10 @@ export async function startNodeNetworkIntegrationV0_1({
           // Start peer presence gossip (P2P liveness propagation)
           startPresenceLoop();
 
+          // Start capability gossip (v0.7.6)
+          startCapabilitiesLoop();
+          try { sendCapabilitiesOnce('after_register'); } catch {}
+
           // Announce join to known peers (P2P only; no bootstrap involvement)
           try { sendJoinAnnounceOnce(); } catch {}
 
@@ -953,6 +1014,18 @@ export async function startNodeNetworkIntegrationV0_1({
               if (topic === 'peer.help.response' && payload?.request_id) {
                 // Receiver-side visibility (sender already logs in capability; daemon can also log if it receives one)
                 log('HELP_RESPONSE_RECEIVED', { node_id, from: m2?.from ?? null, request_id: payload?.request_id, status: payload?.status || null });
+                return;
+              }
+
+              // v0.7.6 capability advertisement
+              if (topic === 'peer.capabilities') {
+                const fromId = String(payload?.node_id || payload?.from || m2?.from || '').trim();
+                const caps = Array.isArray(payload?.capabilities) ? payload.capabilities : null;
+                const tsIn = payload?.ts || null;
+                if (fromId && fromId !== node_id && caps && caps.length) {
+                  try { recordCapability({ from: fromId, capabilities: caps, ts: tsIn }); } catch {}
+                  log('PEER_CAPABILITIES_RECEIVED', { node_id, from: fromId, capability_count: caps.length, ts_in: tsIn });
+                }
                 return;
               }
 
