@@ -1,77 +1,125 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-function stableStringify(obj) {
-  const norm = (v) => {
-    if (Array.isArray(v)) return v.map(norm);
-    if (v && typeof v === 'object') {
-      const out = {};
-      for (const k of Object.keys(v).sort()) out[k] = norm(v[k]);
-      return out;
-    }
-    return v;
-  };
-  return JSON.stringify(norm(obj));
-}
+const execFileP = promisify(execFile);
 
-function sha256Hex(buf) {
+function nowIso(){ return new Date().toISOString(); }
+function jlog(obj){ process.stdout.write(JSON.stringify(obj, null, 2) + '\n'); }
+
+function sha256Hex(buf){
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-function nowIso() {
-  return new Date().toISOString();
+async function readJson(p){
+  const raw = await fs.readFile(p, 'utf8');
+  return JSON.parse(String(raw));
 }
 
-function parseArgs(argv) {
-  const out = { version: null, git_commit: null, outPath: 'release.json' };
-  for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--version') out.version = argv[++i] || null;
-    else if (a === '--git_commit') out.git_commit = argv[++i] || null;
-    else if (a === '--out') out.outPath = argv[++i] || out.outPath;
+async function writeJsonAtomic(p,obj){
+  const tmp = `${p}.tmp.${process.pid}`;
+  await fs.writeFile(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+  await fs.rename(tmp, p);
+}
+
+function parseHashField(s){
+  const v = String(s || '').trim();
+  if (v.startsWith('sha256:')) return v.slice('sha256:'.length);
+  return v;
+}
+
+function canonicalCommit(man){
+  return String(man?.git_commit_hash || man?.git_commit || '').trim() || null;
+}
+
+function canonicalVersion(man){
+  return String(man?.version || '').trim() || null;
+}
+
+function messageToSign({ version, commit, skillHashHex }){
+  return `${version}|${commit}|sha256:${skillHashHex}`;
+}
+
+async function gitHead(){
+  const { stdout } = await execFileP('git', ['rev-parse', 'HEAD']);
+  return String(stdout).trim();
+}
+
+async function ensureKeypair({ pubPath, privPath }){
+  const privPem = await fs.readFile(privPath, 'utf8').catch(()=>null);
+  if (privPem && String(privPem).trim()) {
+    const pub = await readJson(pubPath).catch(()=>null);
+    if (pub?.publicKeyPem) return { privPem: String(privPem), pubPem: String(pub.publicKeyPem) };
   }
-  return out;
+
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const pubPem = publicKey.export({ type: 'spki', format: 'pem' });
+  const privPem2 = privateKey.export({ type: 'pkcs8', format: 'pem' });
+
+  await fs.mkdir(path.dirname(privPath), { recursive: true });
+  await fs.writeFile(privPath, privPem2, { mode: 0o600 });
+
+  await fs.mkdir(path.dirname(pubPath), { recursive: true });
+  await writeJsonAtomic(pubPath, { ok: true, kty: 'ed25519', publicKeyPem: pubPem });
+
+  return { privPem: privPem2, pubPem };
 }
 
-async function main() {
-  const args = parseArgs(process.argv);
-  const version = String(args.version || '').trim();
-  const git_commit = String(args.git_commit || '').trim();
-  if (!/^v\d+\.\d+\.\d+$/.test(version)) throw new Error('bad --version');
-  if (!/^[0-9a-f]{7,40}$/i.test(git_commit)) throw new Error('bad --git_commit');
+async function main(){
+  const repoRoot = process.cwd();
+  const releasePath = path.join(repoRoot, 'release.json');
+  const skillPath = path.join(repoRoot, 'skill.md');
+  const pubPath = path.join(repoRoot, 'config', 'release_pubkey.json');
 
-  const privPath = String(process.env.RELEASE_PRIVATE_KEY_PATH || '').trim();
-  if (!privPath) throw new Error('missing RELEASE_PRIVATE_KEY_PATH');
+  const defaultPrivPath = path.join(process.env.HOME || '/home/ubuntu', '.a2a-release-keys', 'release_ed25519_private.pem');
+  const privPath = String(process.env.RELEASE_PRIVKEY_PATH || defaultPrivPath);
 
-  const skillPath = path.join(process.cwd(), 'skill.md');
-  const skillBuf = await fs.readFile(skillPath);
-  const skillHash = 'sha256:' + sha256Hex(skillBuf);
+  const man = await readJson(releasePath);
+  const version = canonicalVersion(man);
+  const commit = canonicalCommit(man);
 
-  const release = {
-    version,
-    channel: 'stable',
-    release_type: 'stable',
-    git_tag: `${version}`, // tag name must align with A2A_VERSION in skill.md (no -stable suffix)
-    git_commit,
-    min_required_version: String(process.env.MIN_REQUIRED_VERSION || 'v0.5.0'),
-    skill_md_hash: skillHash,
-    released_at: nowIso()
-  };
+  if (!version) throw new Error('MISSING_version');
+  if (!commit) throw new Error('MISSING_git_commit_hash');
 
-  const msg = stableStringify(release);
-  const privPem = await fs.readFile(privPath, 'utf8');
-  const sig = crypto.sign(null, Buffer.from(msg, 'utf8'), privPem);
+  // fail-closed: commit must match HEAD to sign
+  const head = await gitHead();
+  if (head !== commit) throw new Error(`GIT_COMMIT_MISMATCH head=${head} release=${commit}`);
 
-  const releaseSigned = { ...release, signature: sig.toString('base64') };
+  const skillRaw = await fs.readFile(skillPath);
+  const skillHashHex = sha256Hex(skillRaw);
 
-  const outJson = stableStringify(releaseSigned);
-  await fs.writeFile(args.outPath, outJson + '\n', 'utf8');
-  console.log(outJson);
+  const wantHex = parseHashField(String(man.skill_md_hash || '').trim());
+  if (!wantHex) throw new Error('MISSING_skill_md_hash');
+  if (wantHex !== skillHashHex) {
+    throw new Error(`SKILL_MD_HASH_MISMATCH want=sha256:${wantHex} got=sha256:${skillHashHex}`);
+  }
+
+  const kp = await ensureKeypair({ pubPath, privPath });
+  const privKey = crypto.createPrivateKey(kp.privPem);
+
+  const msg = messageToSign({ version, commit, skillHashHex });
+  const sig = crypto.sign(null, Buffer.from(msg, 'utf8'), privKey);
+  const sigB64 = sig.toString('base64');
+
+  const next = { ...man, signature: sigB64, build_ts: man.build_ts || nowIso() };
+  await writeJsonAtomic(releasePath, next);
+
+  jlog({
+    ok: true,
+    ts: nowIso(),
+    signed: true,
+    release_json: releasePath,
+    public_key: pubPath,
+    private_key: privPath,
+    message: msg,
+    signature_b64_prefix: sigB64.slice(0, 12) + '...'
+  });
 }
 
-main().catch((e) => {
-  console.error(String(e?.stack || e));
+main().catch((e)=>{
+  jlog({ ok:false, ts: nowIso(), event:'RELEASE_SIGN_FAILED', reason: String(e?.message || e) });
   process.exit(1);
 });

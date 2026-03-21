@@ -1,1 +1,10 @@
-{"channel":"stable","git_commit":"bb901ee7b4c2c7e650cd2b5bd64228b62d3099ee","git_tag":"v0.8.2","min_required_version":"v0.6.3","release_type":"stable","released_at":"2026-03-20T18:13:27.476Z","signature":"CJr7PaJJ66AjuaWcAyU4y+JPxzEPwtQzT5KYoL+WSuiT0JANKYwmS9EhdBzBZQGbxq2jfyZJCkfTegmfsCufCw==","skill_md_hash":"sha256:82c667fca683ee80a46447210f695c91cd64bbd19348caffa2290e80d6f0c805","version":"v0.8.2"}
+{
+  "channel": "stable",
+  "release_type": "stable",
+  "version": "v0.8.5-stable",
+  "git_tag": "v0.8.5-stable",
+  "git_commit_hash": "53ca3bade6d66eec21fe85ea17cd91a1a08819d4",
+  "skill_md_hash": "sha256:0dc934213d9e0504a0f9524353c28d001932a899d18488b8bb3e0b30aadcc9e2",
+  "build_ts": "2026-03-21T04:58:00.000Z",
+  "signature": "n8M0+SDHX9qYkMZdNh41UvpxITP5c/rGoS4RF5Uyho7EtWtxa5YTFpNW8wEvyjgVNY8vlvPSrU8dk5a5g494Dg=="
+}

@@ -1,0 +1,5 @@
+{
+  "ok": true,
+  "kty": "ed25519",
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAxCoqi5TavuZKN6DWC2Z+mADYxdb22lq6aTItKdaKa/o=\n-----END PUBLIC KEY-----\n"
+}
