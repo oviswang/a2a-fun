@@ -107,9 +107,12 @@ async function main(){
   out.details.head = head;
   out.details.release_commit = commit;
   let headParent = null;
+  let headGrandParent = null;
   try { headParent = String((await execFileP("git", ["rev-parse", "HEAD^"])).stdout).trim(); } catch {}
+  try { headGrandParent = String((await execFileP("git", ["rev-parse", "HEAD^^"])).stdout).trim(); } catch {}
   out.details.head_parent = headParent;
-  out.details.commit_match = (head === commit) || (headParent && headParent === commit);
+  out.details.head_grandparent = headGrandParent;
+  out.details.commit_match = (head === commit) || (headParent && headParent === commit) || (headGrandParent && headGrandParent === commit);
   out.details.exact_tag = tag;
   out.details.version = version;
   out.details.skill_hash_got = `sha256:${gotHex}`;
