@@ -270,9 +270,80 @@ export async function getNetworkSnapshot({
     }))
     .sort((a, b) => b.count - a.count || String(a.country || '').localeCompare(String(b.country || '')));
 
+  // --------------------
+  // REAL PEER FILTER (truth-layer)
+  // A peer is REAL only if:
+  // - last_seen <= 60s
+  // AND
+  // - (last_success <= 120s OR responder_ready seen)
+  //
+  // Source of truth for last_seen/last_success/responder_ready is active-responders.json (best-effort).
+  // Fallback: presence-cache freshness only.
+  // --------------------
+
+  const ar = await readJsonSafe(path.join(ws, 'data', 'active-responders.json'));
+  const arNodes = ar && typeof ar.nodes === 'object' && ar.nodes ? ar.nodes : {};
+
+  const nowMs = Date.now();
+  const REAL_LAST_SEEN_MS = 60_000;
+  const REAL_LAST_SUCCESS_MS = 120_000;
+
   const trustRank = (t) => (t === 'VERIFIED' ? 0 : t === 'INVALID' ? 2 : 1);
-  const active_peers = gossip_peers
-    .filter((p) => p.freshness === 'ACTIVE')
+
+  const isRealPeer = (p) => {
+    const id = String(p?.node_id || '').trim();
+    if (!id) return false;
+
+    // Prefer active-responders truth table when present.
+    const a = arNodes?.[id] || null;
+    if (a) {
+      const ls = a?.last_seen ? (nowMs - Date.parse(a.last_seen)) : NaN;
+      const okSeen = Number.isFinite(ls) && ls <= REAL_LAST_SEEN_MS;
+
+      const lsucc = a?.last_success_ts ? (nowMs - Date.parse(a.last_success_ts)) : NaN;
+      const okSucc = Number.isFinite(lsucc) && lsucc <= REAL_LAST_SUCCESS_MS;
+
+      const readySeen = String(a?.responder_status || '').toLowerCase() === 'ready';
+      return okSeen && (okSucc || readySeen);
+    }
+
+    // Fallback: presence only (still requires <=60s)
+    return p.freshness === 'ACTIVE' && typeof p.age_ms === 'number' && p.age_ms <= REAL_LAST_SEEN_MS;
+  };
+
+  // Merge bootstrap + gossip into a single visible set for REAL peer filtering.
+  // This avoids "empty network" when local presence-cache lags but bootstrap has fresh last_seen.
+  const bootstrap_as_peers = bootstrap_peers
+    .map((p) => {
+      const node_id = String(p?.node_id || '').trim();
+      if (!node_id) return null;
+      const ts = p?.last_seen || null;
+      const ageMs = ts ? Date.now() - Date.parse(ts) : NaN;
+      const active = Number.isFinite(ageMs) && ageMs <= presenceWindowMs;
+      return {
+        node_id,
+        last_presence_ts: ts,
+        age_ms: Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs)) : null,
+        freshness: active ? 'ACTIVE' : 'STALE',
+        version: p?.version || null,
+        node_version: p?.version || null,
+        trust_level: null,
+        trust_state: null,
+        country_code: p?.country_code || null,
+        observed_addrs_len: Array.isArray(p?.observed_addrs) ? p.observed_addrs.length : 0,
+        observed_addrs: Array.isArray(p?.observed_addrs) ? p.observed_addrs : null
+      };
+    })
+    .filter(Boolean);
+
+  const mergedById = new Map();
+  // Prefer gossip (richer fields), fallback to bootstrap.
+  for (const p of bootstrap_as_peers) mergedById.set(p.node_id, p);
+  for (const p of gossip_peers) mergedById.set(p.node_id, p);
+  const merged_peers = [...mergedById.values()];
+
+  const active_peers = merged_peers
+    .filter(isRealPeer)
     .sort((a, b) => {
       const ra = trustRank(a.trust_level);
       const rb = trustRank(b.trust_level);
