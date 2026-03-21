@@ -3,8 +3,8 @@
   "release_type": "stable",
   "version": "v0.8.5-stable",
   "git_tag": "v0.8.5-stable",
-  "git_commit_hash": "45c2e677c4a094c65a026a46f9d7adbc8ca17575",
+  "git_commit_hash": "d4aa90601e287008534fcfffb5fe88702c01a594",
   "skill_md_hash": "sha256:0dc934213d9e0504a0f9524353c28d001932a899d18488b8bb3e0b30aadcc9e2",
-  "build_ts": "2026-03-21T05:02:33.000Z",
-  "signature": "PA/8WvERuPLrYItHgA248RTiwfIOSxe+txmI/1V44/0olI5XP1fb9KgUy0Z09zK4AyYyV0DI1EnT4OCkTNmmCQ=="
+  "build_ts": "2026-03-21T06:41:12.000Z",
+  "signature": "f5oV4CrqIw9G/j129iHrcuMqRDwRwnIM6e6cVPs8Nfdgh32smQNEUOKQdKEMLn3duIWV00bA0UhIX6smjQQZDA=="
 }
