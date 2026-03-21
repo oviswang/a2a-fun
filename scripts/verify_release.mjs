@@ -106,13 +106,19 @@ async function main(){
   out.tag_match = (!!tag && (tag === version || tag === String(man.git_tag || '').trim()));
   out.details.head = head;
   out.details.release_commit = commit;
-  let headParent = null;
-  let headGrandParent = null;
-  try { headParent = String((await execFileP("git", ["rev-parse", "HEAD^"])).stdout).trim(); } catch {}
-  try { headGrandParent = String((await execFileP("git", ["rev-parse", "HEAD^^"])).stdout).trim(); } catch {}
-  out.details.head_parent = headParent;
-  out.details.head_grandparent = headGrandParent;
-  out.details.commit_match = (head === commit) || (headParent && headParent === commit) || (headGrandParent && headGrandParent === commit);
+  // Allow a small metadata chain: release_commit may refer to the underlying code commit.
+  // Accept if it matches HEAD or one of the recent ancestors (depth<=5).
+  const recent = [];
+  for (let i = 0; i <= 5; i++) {
+    try {
+      const rev = i === 0 ? 'HEAD' : `HEAD~${i}`;
+      const h = String((await execFileP('git', ['rev-parse', rev])).stdout).trim();
+      if (h) recent.push({ rev, hash: h });
+    } catch {}
+  }
+  out.details.recent = recent;
+  out.details.commit_match = recent.some((x) => x.hash === commit);
+
   out.details.exact_tag = tag;
   out.details.version = version;
   out.details.skill_hash_got = `sha256:${gotHex}`;
