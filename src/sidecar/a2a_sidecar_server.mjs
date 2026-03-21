@@ -120,10 +120,20 @@ async function pickWebSocketCtor() {
   }
 }
 
-function isUsableResult(task_type, result) {
+function isUsableResult(task_type, payload, result) {
   const r = result && typeof result === 'object' ? result : null;
   if (!r) return false;
-  if (task_type === 'echo') return typeof r.message === 'string' && r.message.trim().length > 0;
+
+  if (task_type === 'echo') {
+    if (typeof r.message !== 'string') return false;
+    const msg = r.message.trim();
+    if (!msg) return false;
+    const want = typeof payload?.text === 'string' ? payload.text.trim() : '';
+    // If the caller provided text, make sure the echo actually contains it.
+    if (want && !msg.includes(want)) return false;
+    return true;
+  }
+
   if (task_type === 'summarize_text') return typeof r.summary === 'string' && r.summary.trim().length > 0;
   if (task_type === 'decision_help') return typeof r.suggestion === 'string' && r.suggestion.trim().length > 0;
   return true;
@@ -288,7 +298,7 @@ async function main() {
           const remoteStatus = String(net.payload?.status || 'success');
           if (remoteStatus === 'success') {
             const remoteResult = net.payload?.result ?? null;
-            const usable = isUsableResult(task_type, remoteResult);
+            const usable = isUsableResult(task_type, payload, remoteResult);
 
             // Product rule (auto mode): if remote returned a "success" envelope but the result is not usable,
             // treat it as a remote failure and fall back locally to preserve first-call success.
