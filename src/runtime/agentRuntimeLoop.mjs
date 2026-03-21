@@ -188,7 +188,12 @@ export async function runLoop({
     relay_url_override,
     onDeliver,
     heartbeatEveryMs: rand(30_000, 60_000)
-   }).catch(() => null);
+   }).catch((e) => {
+    try {
+     console.log(JSON.stringify({ ok: true, event: 'NODE_NETWORK_INTEGRATION_FAILED', ts: new Date().toISOString(), node_id, error: { message: e?.message || String(e), stack: String(e?.stack || '').split('\n').slice(0, 6).join('\n') } }));
+    } catch {}
+    return null;
+   });
 
    // bind send after registration attempt
    if (networkHandle && typeof networkHandle.send === 'function') {

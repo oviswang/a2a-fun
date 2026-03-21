@@ -234,8 +234,9 @@ export async function startNodeNetworkIntegrationV0_1({
 
   // 3) bootstrap discovery (relays + peers) with degraded-mode cache
   const ws = workspacePath();
-  const relayCachePath = path.join(ws, 'data', 'relay-cache.json');
-  const peerCachePath = path.join(ws, 'data', 'peer-cache.json');
+  const dataDir = path.join(ws, 'data');
+  const relayCachePath = path.join(dataDir, 'relay-cache.json');
+  const peerCachePath = path.join(dataDir, 'peer-cache.json');
 
   const candidates = [];
   if (relay_url_override) candidates.push(String(relay_url_override).trim());
