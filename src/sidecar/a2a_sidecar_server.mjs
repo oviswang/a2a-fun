@@ -239,7 +239,12 @@ async function main() {
 
       const body = await readJson(req);
       const task_type = String(body?.task_type || '').trim();
-      const payload = body?.payload && typeof body.payload === 'object' ? body.payload : {};
+      const payload0 = body?.payload && typeof body.payload === 'object' ? body.payload : {};
+      // Additive payload normalization for better first-call compatibility with existing responders.
+      const payload = { ...payload0 };
+      if (task_type === 'echo' && typeof payload.text === 'string' && typeof payload.message !== 'string') payload.message = payload.text;
+      if (task_type === 'summarize_text' && typeof payload.text === 'string' && typeof payload.input !== 'string') payload.input = payload.text;
+      if (task_type === 'decision_help' && typeof payload.question === 'string' && typeof payload.prompt !== 'string') payload.prompt = payload.question;
       const timeout_ms = Number(body?.timeout_ms || 5000);
       const mode = String(body?.mode || 'auto').trim();
 
