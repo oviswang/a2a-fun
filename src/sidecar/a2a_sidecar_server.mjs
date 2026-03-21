@@ -120,6 +120,15 @@ async function pickWebSocketCtor() {
   }
 }
 
+function isUsableResult(task_type, result) {
+  const r = result && typeof result === 'object' ? result : null;
+  if (!r) return false;
+  if (task_type === 'echo') return typeof r.message === 'string' && r.message.trim().length > 0;
+  if (task_type === 'summarize_text') return typeof r.summary === 'string' && r.summary.trim().length > 0;
+  if (task_type === 'decision_help') return typeof r.suggestion === 'string' && r.suggestion.trim().length > 0;
+  return true;
+}
+
 function mapNetworkErrorToReason(code) {
   const c = String(code || '').toUpperCase();
   if (c === 'TIMEOUT') return 'network_timeout';
@@ -278,9 +287,34 @@ async function main() {
         if (net.ok) {
           const remoteStatus = String(net.payload?.status || 'success');
           if (remoteStatus === 'success') {
+            const remoteResult = net.payload?.result ?? null;
+            const usable = isUsableResult(task_type, remoteResult);
+
+            // Product rule (auto mode): if remote returned a "success" envelope but the result is not usable,
+            // treat it as a remote failure and fall back locally to preserve first-call success.
+            if (!usable) {
+              if (forceNetworkOnly) {
+                return sendJson(res, 200, makeResponse({
+                  status: 'failed',
+                  result: remoteResult,
+                  trace: {
+                    path: 'network',
+                    responder: net.responder || null,
+                    task_type,
+                    summary: 'Remote execution returned an unusable result.',
+                    reason: 'remote_unusable_result',
+                    network_attempted: true,
+                    fallback_used: false,
+                    execution_time_ms: net.payload?.execution_time_ms ?? net.execution_time_ms,
+                  }
+                }));
+              }
+              return sendJson(res, 200, await handleLocal({ task_type, payload, reason: 'remote_unusable_result', network_attempted: true }));
+            }
+
             return sendJson(res, 200, makeResponse({
               status: 'success',
-              result: net.payload?.result ?? null,
+              result: remoteResult,
               trace: {
                 path: 'network',
                 responder: net.responder || null,
