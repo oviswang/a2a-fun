@@ -294,11 +294,19 @@ export async function getNetworkSnapshot({
     const id = String(p?.node_id || '').trim();
     if (!id) return false;
 
-    // Prefer active-responders truth table when present.
+    // Prefer active-responders truth table when present, but NEVER let stale active-responders timestamps
+    // override fresher bootstrap/presence observations.
     const a = arNodes?.[id] || null;
     if (a) {
-      const ls = a?.last_seen ? (nowMs - Date.parse(a.last_seen)) : NaN;
-      const okSeen = Number.isFinite(ls) && ls <= REAL_LAST_SEEN_MS;
+      const seenAges = [];
+      try {
+        if (a?.last_seen) seenAges.push(nowMs - Date.parse(a.last_seen));
+      } catch {}
+      try {
+        if (p?.last_presence_ts) seenAges.push(nowMs - Date.parse(p.last_presence_ts));
+      } catch {}
+      const minSeen = seenAges.length ? Math.min(...seenAges.filter((x) => Number.isFinite(x))) : NaN;
+      const okSeen = Number.isFinite(minSeen) && minSeen <= REAL_LAST_SEEN_MS;
 
       const lsucc = a?.last_success_ts ? (nowMs - Date.parse(a.last_success_ts)) : NaN;
       const okSucc = Number.isFinite(lsucc) && lsucc <= REAL_LAST_SUCCESS_MS;
