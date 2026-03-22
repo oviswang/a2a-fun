@@ -1,4 +1,5 @@
 import { getReputation } from '../reputation/reputation.mjs';
+import { availabilityBonus, getLastSuccessTs } from '../availability/responderAvailability.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -56,7 +57,8 @@ function trustScoreFromRelationship(state) {
 }
 
 function weightDefault() {
-  return { trust: 0.35, capability: 0.3, freshness: 0.2, reputation: 0.15 };
+  // v0.8.3 additive: availability bonus is intentionally small and cannot dominate.
+  return { trust: 0.35, capability: 0.3, freshness: 0.2, reputation: 0.15, availability: 0.1 };
 }
 
 function logRoutingDecision(payload) {
@@ -116,16 +118,29 @@ export function selectCandidateReputationAware({
       repNorm = normalizeReputationScore(rawRep);
     }
 
+    const agentId = safeStr(c?.agent_id);
+    const availability_bonus = agentId ? availabilityBonus(agentId, { dataDir }) : 0;
+    const last_success_ts = agentId ? getLastSuccessTs(agentId, { dataDir }) : null;
+
     const final_score =
       w.trust * trust_score +
       w.capability * capability_score +
       w.freshness * freshness_score +
-      w.reputation * repNorm;
+      w.reputation * repNorm +
+      w.availability * availability_bonus;
 
     return {
       candidate: c,
-      components: { trust_score, capability_score, freshness_score, reputation_score_normalized: repNorm, raw_reputation_score: rawRep },
-      final_score
+      components: {
+        trust_score,
+        capability_score,
+        freshness_score,
+        reputation_score_normalized: repNorm,
+        raw_reputation_score: rawRep,
+        availability_bonus,
+        last_success_ts,
+      },
+      final_score,
     };
   });
 

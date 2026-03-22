@@ -20,6 +20,10 @@
 
 import http from 'node:http';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { updateResponderRegistry, loadResponderRegistry } from './responderRegistryV0_8_4.mjs';
+import { selectCandidateAvailabilityAware } from '../routing/availabilityAwareRoutingV0_8_4.mjs';
+import { recordResponderEvent, summarizeResponderHealth } from './responderHealthV0_8_4.mjs';
 
 async function readJson(req, maxBytes = 1_000_000) {
   const chunks = [];
@@ -63,6 +67,8 @@ function makeResponse({ status, result = null, trace }) {
       network_attempted: Boolean(trace.network_attempted),
       fallback_used: Boolean(trace.fallback_used),
       execution_time_ms: typeof trace.execution_time_ms === 'number' ? trace.execution_time_ms : null,
+      routing: trace.routing && typeof trace.routing === 'object' ? trace.routing : undefined,
+      candidate_count: typeof trace.candidate_count === 'number' ? trace.candidate_count : undefined,
     }
   };
 }
@@ -246,9 +252,23 @@ async function handleLocal({ task_type, payload, reason, network_attempted }) {
   }
 }
 
+function envEnabled(name, def = true) {
+  const v = String(process.env[name] ?? '').trim();
+  if (!v) return def;
+  return v !== '0' && v.toLowerCase() !== 'false';
+}
+
 async function main() {
   const port = Number(process.env.A2A_SIDECAR_PORT || 17888);
   const host = '127.0.0.1';
+  const dataDir = String(process.env.A2A_DATA_DIR || path.join(process.cwd(), 'data'));
+
+  const enableDiscovery = envEnabled('A2A_ENABLE_RESPONDER_DISCOVERY', true);
+  const enableAvailabilityRouting = envEnabled('A2A_ENABLE_AVAILABILITY_ROUTING', true);
+  const enableAutoDownrank = envEnabled('A2A_ENABLE_AUTO_DOWNRANK', true);
+
+  let lastRegistryUpdateMs = 0;
+  const lastHealthStatus = new Map(); // node_id -> last derived health_status
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -285,102 +305,262 @@ async function main() {
 
       // Network preconditions
       const relayUrl = String(process.env.RELAY_URL || 'wss://gw.bothook.me/relay').trim();
-      const target = String(body?.target || '').trim() || String(process.env.A2A_SIDECAR_DEFAULT_TARGET || '').trim();
-
       const wantNetwork = (mode !== 'local');
       const forceNetworkOnly = (mode === 'network');
 
-      // 1) Network attempt (only when target is provided)
-      if (wantNetwork && target) {
-        const net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms });
+      const explicitTarget = String(body?.target || '').trim() || null;
 
-        if (net.ok) {
-          const remoteStatus = String(net.payload?.status || 'success');
-          if (remoteStatus === 'success') {
-            const remoteResult = net.payload?.result ?? null;
-            const usable = isUsableResult(task_type, payload, remoteResult);
+      // v0.8.4: automatic responder discovery + derived registry (rollbackable)
+      // Source of truth remains existing caches under dataDir (presence-cache / capabilities-cache / success & health stores).
+      if (enableDiscovery) {
+        const now = Date.now();
+        if (now - lastRegistryUpdateMs > 30_000) {
+          await updateResponderRegistry({ dataDir });
+          lastRegistryUpdateMs = now;
+        }
+      }
 
-            // Product rule (auto mode): if remote returned a "success" envelope but the result is not usable,
-            // treat it as a remote failure and fall back locally to preserve first-call success.
-            if (!usable) {
-              if (forceNetworkOnly) {
-                return sendJson(res, 200, makeResponse({
-                  status: 'failed',
-                  result: remoteResult,
-                  trace: {
-                    path: 'network',
-                    responder: net.responder || null,
-                    task_type,
-                    summary: 'Remote execution returned an unusable result.',
-                    reason: 'remote_unusable_result',
-                    network_attempted: true,
-                    fallback_used: false,
-                    execution_time_ms: net.payload?.execution_time_ms ?? net.execution_time_ms,
-                  }
-                }));
-              }
-              return sendJson(res, 200, await handleLocal({ task_type, payload, reason: 'remote_unusable_result', network_attempted: true }));
-            }
+      let registry = null;
+      if (enableDiscovery) {
+        const lr = await loadResponderRegistry({ dataDir });
+        registry = lr?.registry || { ts: nowIso(), nodes: {} };
+      }
 
-            return sendJson(res, 200, makeResponse({
-              status: 'success',
-              result: remoteResult,
-              trace: {
-                path: 'network',
-                responder: net.responder || null,
-                task_type,
-                summary: `Handled by remote node ${net.responder || 'unknown'} over A2A network.`,
-                reason: 'local_fallback_not_needed',
-                network_attempted: true,
-                fallback_used: false,
-                execution_time_ms: net.payload?.execution_time_ms ?? net.execution_time_ms,
-              }
-            }));
+      // Build target candidates (max 3) without default target dependency.
+      // Rule:
+      // - explicit params.target is honored
+      // - otherwise, select from derived registry candidates only
+      let targetCandidates = [];
+      let routingMeta = null;
+
+      if (explicitTarget) {
+        targetCandidates = [explicitTarget];
+        routingMeta = {
+          availability_status: 'unknown',
+          availability_bucket: 'explicit',
+          availability_reason: 'explicit_target',
+        };
+      } else if (enableDiscovery && enableAvailabilityRouting) {
+        const nodes = registry?.nodes && typeof registry.nodes === 'object' ? registry.nodes : {};
+        const all = Object.entries(nodes).map(([node_id, n]) => ({
+          agent_id: String(node_id),
+          name: String(node_id),
+          summary: '',
+          skills: Array.isArray(n?.capabilities) ? n.capabilities : [],
+          last_seen: n?.last_seen_ts || null,
+        }));
+
+        // Pick up to 3 attempts, constrained to the highest non-empty availability bucket.
+        const tried = new Set();
+        let chosenBucket = null;
+
+        for (let i = 0; i < 3; i++) {
+          const remaining = all.filter((c) => !tried.has(String(c.agent_id)));
+          const sel = selectCandidateAvailabilityAware({ candidates: remaining, task_type, registry, dataDir });
+          if (!sel?.ok || !sel?.selected?.agent_id) {
+            break;
           }
 
-          // Remote replied but did not succeed.
-          if (forceNetworkOnly) {
-            return sendJson(res, 200, makeResponse({
-              status: 'failed',
-              result: net.payload?.result ?? null,
-              trace: {
-                path: 'network',
-                responder: net.responder || null,
-                task_type,
-                summary: 'Remote execution failed.',
-                reason: `remote_failed:${remoteStatus}`,
-                network_attempted: true,
-                fallback_used: false,
-                execution_time_ms: net.execution_time_ms,
-              }
-            }));
+          if (!chosenBucket) chosenBucket = sel.routing?.availability_bucket || null;
+          if (chosenBucket && sel.routing?.availability_bucket && sel.routing.availability_bucket !== chosenBucket) {
+            // Do not drop into a lower bucket during normal exploration/retries.
+            break;
           }
 
-          // Auto mode: fall back locally.
-          const reason = `remote_failed:${remoteStatus}`;
-          return sendJson(res, 200, await handleLocal({ task_type, payload, reason, network_attempted: true }));
+          const id = String(sel.selected.agent_id);
+          tried.add(id);
+          targetCandidates.push(id);
+
+          routingMeta = {
+            availability_status: sel.routing?.availability_status,
+            availability_bucket: sel.routing?.availability_bucket,
+            availability_reason: sel.routing?.availability_reason,
+            bucket_counts: sel.routing?.bucket_counts,
+          };
         }
 
-        // Network failed.
-        const reason = mapNetworkErrorToReason(net.error?.code);
-        if (forceNetworkOnly) {
-          const status = String(net.error?.code || '').toUpperCase() === 'TIMEOUT' ? 'timeout' : 'unavailable';
+        // v0.8.4 correctness: if no candidates exist, return structured unavailable (do not inject defaults).
+        if (wantNetwork && targetCandidates.length === 0) {
           return sendJson(res, 200, makeResponse({
-            status,
+            status: 'unavailable',
             result: null,
             trace: {
               path: 'network',
               responder: null,
               task_type,
-              summary: 'Remote execution unavailable.',
-              reason,
-              network_attempted: true,
+              summary: 'Remote execution unavailable: no available responder discovered.',
+              reason: 'no_available_responder',
+              network_attempted: false,
               fallback_used: false,
-            }
+              routing: {
+                availability_status: 'unavailable',
+                availability_bucket: 'none',
+                availability_reason: 'registry_empty_or_no_capability_match',
+              },
+              candidate_count: 0,
+            },
           }));
         }
+      } else if (!enableDiscovery) {
+        // Rollback path: v0.8.3 target list behavior (explicit defaults).
+        const primaryTarget = String(process.env.A2A_SIDECAR_DEFAULT_TARGET || '').trim();
+        const fallbackTargets = String(process.env.A2A_SIDECAR_FALLBACK_TARGETS || '')
+          .split(',')
+          .map((x) => String(x || '').trim())
+          .filter(Boolean);
+        const seen = new Set();
+        for (const t of [primaryTarget, ...fallbackTargets]) {
+          const s = String(t || '').trim();
+          if (!s) continue;
+          if (seen.has(s)) continue;
+          seen.add(s);
+          targetCandidates.push(s);
+          if (targetCandidates.length >= 3) break;
+        }
+        routingMeta = { availability_bucket: 'legacy_default_targets', availability_reason: 'discovery_disabled' };
+      }
 
-        return sendJson(res, 200, await handleLocal({ task_type, payload, reason, network_attempted: true }));
+      // 1) Network attempt (up to 3 targets)
+      if (wantNetwork && targetCandidates.length) {
+        let attempted = 0;
+        let lastFailureReason = 'remote_unavailable';
+
+        for (const target of targetCandidates) {
+          attempted++;
+          const net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms });
+
+          const emitHealthTransition = (nodeId) => {
+            if (!enableAutoDownrank) return;
+            try {
+              const h = summarizeResponderHealth(nodeId, { dataDir });
+              const prev = lastHealthStatus.get(nodeId) || null;
+              const next = h.status;
+              if (next && next !== prev) {
+                lastHealthStatus.set(nodeId, next);
+                if ((next === 'degraded' || next === 'unreliable') && prev !== next) {
+                  console.log(JSON.stringify({ ok: true, event: 'RESPONDER_DOWNRANKED', node_id: nodeId, from: prev, to: next, ts: nowIso(), stats: h.stats }));
+                }
+                if (next === 'healthy' && (prev === 'degraded' || prev === 'unreliable')) {
+                  console.log(JSON.stringify({ ok: true, event: 'RESPONDER_RECOVERED', node_id: nodeId, from: prev, to: next, ts: nowIso(), stats: h.stats }));
+                }
+              }
+            } catch {}
+          };
+
+          if (net.ok) {
+            const remoteStatus = String(net.payload?.status || 'success');
+
+            if (remoteStatus === 'success') {
+              const remoteResult = net.payload?.result ?? null;
+              const usable = isUsableResult(task_type, payload, remoteResult);
+
+              if (!usable) {
+                lastFailureReason = 'remote_unusable_result';
+                if (enableAutoDownrank) {
+                  recordResponderEvent({ node_id: target, task_type, kind: 'failure', dataDir });
+                  emitHealthTransition(target);
+                }
+                if (forceNetworkOnly) {
+                  return sendJson(res, 200, makeResponse({
+                    status: 'failed',
+                    result: remoteResult,
+                    trace: {
+                      path: 'network',
+                      responder: net.responder || null,
+                      task_type,
+                      summary: 'Remote execution returned an unusable result.',
+                      reason: 'remote_unusable_result',
+                      network_attempted: true,
+                      fallback_used: false,
+                      routing: routingMeta,
+                      candidate_count: targetCandidates.length,
+                      execution_time_ms: net.payload?.execution_time_ms ?? net.execution_time_ms,
+                    }
+                  }));
+                }
+                continue;
+              }
+
+              if (enableAutoDownrank) {
+                recordResponderEvent({ node_id: target, task_type, kind: 'success', dataDir });
+                emitHealthTransition(target);
+              }
+
+              return sendJson(res, 200, makeResponse({
+                status: 'success',
+                result: remoteResult,
+                trace: {
+                  path: 'network',
+                  responder: net.responder || null,
+                  task_type,
+                  summary: `Handled by remote node ${net.responder || 'unknown'} over A2A network.`,
+                  reason: 'local_fallback_not_needed',
+                  network_attempted: true,
+                  fallback_used: false,
+                  routing: routingMeta,
+                  candidate_count: targetCandidates.length,
+                  execution_time_ms: net.payload?.execution_time_ms ?? net.execution_time_ms,
+                }
+              }));
+            }
+
+            lastFailureReason = `remote_failed:${remoteStatus}`;
+            if (enableAutoDownrank) {
+              const kind = remoteStatus === 'unsupported' ? 'unsupported' : 'failure';
+              recordResponderEvent({ node_id: target, task_type, kind, dataDir });
+              emitHealthTransition(target);
+            }
+
+            if (forceNetworkOnly) {
+              return sendJson(res, 200, makeResponse({
+                status: 'failed',
+                result: net.payload?.result ?? null,
+                trace: {
+                  path: 'network',
+                  responder: net.responder || null,
+                  task_type,
+                  summary: 'Remote execution failed.',
+                  reason: `remote_failed:${remoteStatus}`,
+                  network_attempted: true,
+                  fallback_used: false,
+                  routing: routingMeta,
+                  candidate_count: targetCandidates.length,
+                  execution_time_ms: net.execution_time_ms,
+                }
+              }));
+            }
+            continue;
+          }
+
+          lastFailureReason = mapNetworkErrorToReason(net.error?.code);
+          if (enableAutoDownrank) {
+            const kind = String(net.error?.code || '').toUpperCase() === 'TIMEOUT' ? 'timeout' : 'failure';
+            recordResponderEvent({ node_id: target, task_type, kind, dataDir });
+            emitHealthTransition(target);
+          }
+
+          if (forceNetworkOnly) {
+            const status = String(net.error?.code || '').toUpperCase() === 'TIMEOUT' ? 'timeout' : 'unavailable';
+            return sendJson(res, 200, makeResponse({
+              status,
+              result: null,
+              trace: {
+                path: 'network',
+                responder: null,
+                task_type,
+                summary: 'Remote execution unavailable.',
+                reason: lastFailureReason,
+                network_attempted: true,
+                fallback_used: false,
+                routing: routingMeta,
+                candidate_count: targetCandidates.length,
+              }
+            }));
+          }
+        }
+
+        // Auto mode: fall back locally after attempts.
+        return sendJson(res, 200, await handleLocal({ task_type, payload, reason: lastFailureReason, network_attempted: attempted > 0 }));
       }
 
       // 2) No network attempt possible
@@ -401,7 +581,7 @@ async function main() {
       }
 
       // 3) Local fallback (auto/local)
-      const reason = target ? 'remote_unavailable' : 'no_reachable_remote_responder';
+      const reason = explicitTarget ? 'remote_unavailable' : 'no_reachable_remote_responder';
       return sendJson(res, 200, await handleLocal({ task_type, payload, reason, network_attempted: false }));
 
     } catch (err) {

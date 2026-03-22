@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getNetworkSnapshot } from './networkSnapshotV0_1.mjs';
+import { recordResponderSuccess } from '../../availability/responderAvailability.mjs';
 
 function nowIso() {
   return new Date().toISOString();
@@ -568,7 +569,8 @@ export async function startNodeNetworkIntegrationV0_1({
     if (sig) p.signature = sig;
 
     // Optional advertised safe task types (bounded, hint-only)
-    p.supported_task_types = ['echo', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'];
+    // v0.8.3 supply guarantee: always advertise at least echo + summarize_text.
+    p.supported_task_types = ['echo', 'summarize_text', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'];
 
     return p;
   };
@@ -1185,6 +1187,15 @@ export async function startNodeNetworkIntegrationV0_1({
                   log('TASK_EXECUTION_COMPLETED', { node_id, responder_id: node_id, request_id: requestId, task_type: taskType, duration_ms: durationMs, result_summary: resultSummary });
 
                   const statusOut = (taskType === 'code_exec_safe' && result?.status === 'unsupported') ? 'unsupported' : 'success';
+
+                  // v0.8.3 availability signal (additive): record successful responder execution.
+                  if (statusOut === 'success') {
+                    try {
+                      const ts = nowIso();
+                      recordResponderSuccess({ node_id, task_type: taskType, ts, dataDir });
+                      console.log(JSON.stringify({ ok: true, event: 'RESPONDER_SUCCESS', node_id, task_type: taskType, ts }));
+                    } catch {}
+                  }
                   const resp = {
                     request_id: requestId,
                     status: statusOut,
@@ -1217,7 +1228,19 @@ export async function startNodeNetworkIntegrationV0_1({
               }
 
               if (topic === 'peer.task.response' && payload?.request_id) {
-                log('TASK_RESPONSE_RECEIVED', { node_id, from: m2?.from ?? null, request_id: payload?.request_id, status: payload?.status || null });
+                const fromPeer = String(payload?.from || m2?.from || '').trim() || null;
+                const st = String(payload?.status || '').trim() || null;
+                log('TASK_RESPONSE_RECEIVED', { node_id, from: fromPeer, request_id: payload?.request_id, status: st });
+
+                // v0.8.3 availability signal (additive): record remote responder success.
+                if (fromPeer && st === 'success') {
+                  try {
+                    const ts = nowIso();
+                    recordResponderSuccess({ node_id: fromPeer, task_type: payload?.task_type || null, ts, dataDir });
+                    console.log(JSON.stringify({ ok: true, event: 'RESPONDER_SUCCESS', node_id: fromPeer, task_type: payload?.task_type || null, ts }));
+                  } catch {}
+                }
+
                 return;
               }
 
