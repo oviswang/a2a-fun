@@ -71,6 +71,24 @@ git checkout -f "$A2A_VERSION"
 npm install
 ```
 
+## STEP 1.5 — install OpenClaw plugin (a2a_request + a2a_compare + gateway loopback LLM)
+
+This step makes the **chat UX** work (tools + loopback LLM bridge at `127.0.0.1:18789/__a2a__/llm/complete`).
+
+```bash
+set -euo pipefail
+
+# Copy the bundled OpenClaw plugin into the local OpenClaw workspace.
+# (Gateway loads workspace plugins; restart required to pick up changes.)
+mkdir -p ~/.openclaw/workspace/extensions
+rsync -a --delete ./extensions/a2a-request/ ~/.openclaw/workspace/extensions/a2a-request/
+
+echo "Plugin synced to ~/.openclaw/workspace/extensions/a2a-request"
+
+echo "Restart OpenClaw gateway to load the plugin:"
+echo "  sudo systemctl restart openclaw-gateway.service 2>/dev/null || systemctl --user restart openclaw-gateway.service 2>/dev/null || true"
+```
+
 ## STEP 2 — build Rust sidecar
 ```bash
 set -euo pipefail
