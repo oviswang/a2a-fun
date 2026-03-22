@@ -1048,7 +1048,7 @@ export async function startNodeNetworkIntegrationV0_1({
                 // Minimal echo fallback for generic task strings (v0.7.0 first responder).
                 if (!taskType && typeof payload?.task === 'string' && String(payload.task).trim()) taskType = 'echo';
 
-                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
+                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
 
                 if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
                   log('TASK_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
@@ -1060,7 +1060,8 @@ export async function startNodeNetworkIntegrationV0_1({
                   let result = null;
 
                   if (taskType === 'echo') {
-                    result = { message: `echo: ${String(payload?.task || '').trim()}` };
+                    const text = String(payload?.payload?.text ?? payload?.payload?.message ?? payload?.task ?? '').trim();
+                    result = { message: `echo: ${text}` };
                   }
 
                   if (taskType === 'summarize_text') {
@@ -1080,12 +1081,43 @@ export async function startNodeNetworkIntegrationV0_1({
                     const question = String(payload?.payload?.question ?? payload?.task ?? '').trim();
                     const optionsRaw = payload?.payload?.options;
                     const options = Array.isArray(optionsRaw) ? optionsRaw.map((x) => String(x).trim()).filter(Boolean).slice(0, 10) : [];
+                    const recommendation = options.length ? options[0] : null;
                     result = {
                       question: question || null,
                       options,
-                      recommendation: options.length ? options[0] : null,
+                      recommendation,
+                      suggestion: recommendation,
                       reasoning: options.length ? 'Defaulting to first option (minimal decision helper; no external context).' : 'No options provided.'
                     };
+                  }
+
+                  if (taskType === 'critique_text') {
+                    const text = String(payload?.payload?.text ?? payload?.task ?? '').trim();
+                    const risks = [];
+                    const missing = [];
+                    const questions = [];
+                    const suggested_fix = [];
+
+                    if (!text) {
+                      missing.push('No input text provided');
+                      questions.push('What plan/proposal should I critique?');
+                    } else {
+                      // Heuristic critique: keep it deterministic and bounded.
+                      if (!/metric|指标|success|成功率|fallback/i.test(text)) risks.push('No success metrics mentioned');
+                      if (!/timeout|预算|budget/i.test(text)) risks.push('No timeout/budget mentioned');
+                      if (!/rollback|回滚|stop|停止/i.test(text)) risks.push('No rollback/stop condition mentioned');
+                      if (!/owner|负责|oncall|值班/i.test(text)) missing.push('No owner/oncall defined');
+                      if (!/evidence|证据|checkpoint/i.test(text)) missing.push('No evidence/checkpoint path defined');
+
+                      questions.push('What is the success threshold for the three core metrics?');
+                      questions.push('What is the rollback trigger and who executes it?');
+
+                      suggested_fix.push('Add explicit thresholds for success/fallback/diversity.');
+                      suggested_fix.push('Add rollback trigger + owner + time window.');
+                      suggested_fix.push('Record evidence pack path for every run.');
+                    }
+
+                    result = { risks, missing, questions, suggested_fix };
                   }
 
                   if (taskType === 'code_exec_safe') {
@@ -1110,7 +1142,7 @@ export async function startNodeNetworkIntegrationV0_1({
                   if (taskType === 'capability_summary') {
                     result = {
                       node_id,
-                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
+                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
                       protocol_version: 'v0.1',
                       trust_status
                     };

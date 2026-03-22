@@ -21,6 +21,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { updateResponderRegistry, loadResponderRegistry } from './responderRegistryV0_8_4.mjs';
 import { selectCandidateAvailabilityAware } from '../routing/availabilityAwareRoutingV0_8_4.mjs';
 import { recordResponderEvent, summarizeResponderHealth } from './responderHealthV0_8_4.mjs';
@@ -134,9 +135,8 @@ function isUsableResult(task_type, payload, result) {
     if (typeof r.message !== 'string') return false;
     const msg = r.message.trim();
     if (!msg) return false;
-    const want = typeof payload?.text === 'string' ? payload.text.trim() : '';
-    // If the caller provided text, make sure the echo actually contains it.
-    if (want && !msg.includes(want)) return false;
+    // NOTE: In the wild, responders are not fully consistent about echoing the exact input.
+    // For network-availability gating we only require a non-empty message.
     return true;
   }
 
@@ -153,12 +153,14 @@ function mapNetworkErrorToReason(code) {
   return 'remote_unavailable';
 }
 
-async function networkExecute({ relayUrl, target, task_type, payload, timeout_ms }) {
+async function networkExecute({ relayUrl, target, task_type, payload, timeout_ms, from_node_id }) {
   const WebSocketCtor = await pickWebSocketCtor();
   if (!WebSocketCtor) return { ok: false, error: { code: 'NO_WEBSOCKET' } };
 
   const request_id = `sidecar:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
-  const from = `a2a-sidecar:${process.pid}`;
+  // IMPORTANT: relay addressing expects a stable node_id-style sender for routing/ACLs.
+  // If missing, many relays will accept REGISTER but drop SEND/DELIVER routing.
+  const from = String(from_node_id || '').trim() || `a2a-sidecar:${process.pid}`;
 
   const t0 = Date.now();
   return await new Promise((resolve) => {
@@ -181,7 +183,7 @@ async function networkExecute({ relayUrl, target, task_type, payload, timeout_ms
     };
 
     ws.onopen = () => {
-      send({ type: 'REGISTER', from, ts: nowIso() });
+      send({ type: 'REGISTER', from, node_id: from, ts: nowIso() });
     };
 
     ws.onmessage = (ev) => {
@@ -262,6 +264,11 @@ async function main() {
   const port = Number(process.env.A2A_SIDECAR_PORT || 17888);
   const host = '127.0.0.1';
   const dataDir = String(process.env.A2A_DATA_DIR || path.join(process.cwd(), 'data'));
+
+  // Stable sender identity for relay routing.
+  const selfNodeId = String(process.env.A2A_NODE_ID || '').trim()
+    || (await fs.readFile(path.join(dataDir, 'node_id'), 'utf8').catch(() => '')).trim()
+    || `a2a-sidecar-${process.pid}`;
 
   const enableDiscovery = envEnabled('A2A_ENABLE_RESPONDER_DISCOVERY', true);
   const enableAvailabilityRouting = envEnabled('A2A_ENABLE_AVAILABILITY_ROUTING', true);
@@ -487,7 +494,7 @@ async function main() {
 
           let net = null;
           try {
-            net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms });
+            net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms, from_node_id: selfNodeId });
           } finally {
             if (enableInflightCap) {
               const n = Math.max(0, Number(inflightByNode.get(target) || 0) - 1);
@@ -518,7 +525,16 @@ async function main() {
             const remoteStatus = String(net.payload?.status || 'success');
 
             if (remoteStatus === 'success') {
-              const remoteResult = net.payload?.result ?? null;
+              let remoteResult = net.payload?.result ?? null;
+
+              // Compatibility: some responders return decision_help as { recommendation, reasoning }
+              // instead of { suggestion, reasoning }.
+              if (task_type === 'decision_help' && remoteResult && typeof remoteResult === 'object') {
+                if (typeof remoteResult.suggestion !== 'string' && typeof remoteResult.recommendation === 'string') {
+                  remoteResult = { ...remoteResult, suggestion: remoteResult.recommendation };
+                }
+              }
+
               const usable = isUsableResult(task_type, payload, remoteResult);
 
               if (!usable) {

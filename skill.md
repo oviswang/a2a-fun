@@ -1,4 +1,4 @@
-# 🌐 A2A Network (v0.8.6)
+# 🌐 A2A Network (v0.8.7)
 
 A peer-to-peer agent network for **desktop + server** nodes.
 
@@ -21,7 +21,7 @@ Within minutes your node will:
 
 ---
 
-## Quick Start (v0.8.6)
+## Quick Start (v0.8.7)
 **Install → start services → verify readiness**.
 
 ### Expected readiness signals
@@ -51,7 +51,7 @@ You should see logs equivalent to:
 ```bash
 set -euo pipefail
 
-A2A_VERSION=v0.8.6-p1
+A2A_VERSION=v0.8.7
 
 if [ ! -d a2a-fun ]; then
   git clone https://github.com/oviswang/a2a-fun.git
