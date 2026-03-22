@@ -147,6 +147,11 @@ function isUsableResult(task_type, payload, result) {
     const hasProb = r.scenarios.every((s) => typeof s?.probability === 'number');
     return hasProb;
   }
+
+  if (task_type === 'text_complete') {
+    return typeof r.text === 'string' && r.text.trim().length > 0;
+  }
+
   return true;
 }
 

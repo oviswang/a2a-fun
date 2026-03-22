@@ -1048,7 +1048,7 @@ export async function startNodeNetworkIntegrationV0_1({
                 // Minimal echo fallback for generic task strings (v0.7.0 first responder).
                 if (!taskType && typeof payload?.task === 'string' && String(payload.task).trim()) taskType = 'echo';
 
-                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'decision_help_v2', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
+                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'decision_help_v2', 'text_complete', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
 
                 if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
                   log('TASK_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
@@ -1132,10 +1132,55 @@ export async function startNodeNetworkIntegrationV0_1({
                         'Probabilities are illustrative and normalized to ~1.0.'
                       ],
                       next_actions: [
-                        'Specify current BTC price and key levels to produce a concrete range.',
+                        'Specify current price and key levels to produce a concrete range.',
                         'Add a macro regime assumption (risk-on vs risk-off) to shift scenario weights.'
                       ]
                     };
+                  }
+
+                  if (taskType === 'text_complete') {
+                    const prompt = String(payload?.payload?.prompt ?? payload?.payload?.text ?? payload?.task ?? '').trim();
+                    const policy = String(payload?.payload?.policy_hint || '').trim();
+                    const model = String(process.env.A2A_LLM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+                    const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+                    if (!apiKey) {
+                      result = { error: { code: 'UNAVAILABLE_NO_MODEL', reason: 'OPENAI_API_KEY not configured' } };
+                    } else {
+                      const sys = policy ? `Follow this policy hint: ${policy}` : 'Answer concisely and explicitly state uncertainties.';
+                      const body2 = {
+                        model,
+                        messages: [
+                          { role: 'system', content: sys },
+                          { role: 'user', content: prompt || '(empty prompt)' },
+                        ],
+                        temperature: 0.7,
+                        max_tokens: 500,
+                      };
+                      const ac = new AbortController();
+                      const t = setTimeout(() => ac.abort(), 12_000);
+                      try {
+                        const r2 = await fetch('https://api.openai.com/v1/chat/completions', {
+                          method: 'POST',
+                          headers: {
+                            'content-type': 'application/json',
+                            authorization: `Bearer ${apiKey}`,
+                          },
+                          body: JSON.stringify(body2),
+                          signal: ac.signal,
+                        });
+                        const j2 = await r2.json().catch(() => null);
+                        const text = String(j2?.choices?.[0]?.message?.content || '').trim();
+                        if (!text) {
+                          result = { error: { code: 'LLM_EMPTY', reason: 'empty completion' }, model };
+                        } else {
+                          result = { text, model, provider: 'openai', policy_hint_used: policy || null };
+                        }
+                      } catch (e2) {
+                        result = { error: { code: 'LLM_ERROR', reason: String(e2?.message || e2) }, model };
+                      } finally {
+                        clearTimeout(t);
+                      }
+                    }
                   }
 
                   if (taskType === 'critique_text') {
@@ -1189,7 +1234,7 @@ export async function startNodeNetworkIntegrationV0_1({
                   if (taskType === 'capability_summary') {
                     result = {
                       node_id,
-                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'decision_help_v2', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
+                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'decision_help_v2', 'text_complete', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
                       protocol_version: 'v0.1',
                       trust_status
                     };
