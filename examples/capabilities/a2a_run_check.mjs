@@ -53,13 +53,18 @@ export async function a2a_run_check(input) {
     return arr.includes(task_type);
   };
 
+  // If caller explicitly specifies self, fail fast (self-task does not produce a network response).
   let target = target_node_id || null;
+  if (target && target === selfNodeId) {
+    return { ok: false, error: { code: 'TARGET_IS_SELF', self: selfNodeId } };
+  }
+
   if (!target) {
     const ap = Array.isArray(snap?.active_peers) ? snap.active_peers : [];
     const bp = Array.isArray(snap?.bootstrap_peers) ? snap.bootstrap_peers : [];
     const base = ap.length ? ap : bp;
 
-    const candidates = base
+    let candidates = base
       .map((p) => ({
         // bootstrap_peers use node_id; active_peers use node_id
         node_id: String(p?.node_id || '').trim(),
@@ -70,7 +75,14 @@ export async function a2a_run_check(input) {
       }))
       .filter((x) => x.node_id);
 
+    // CRITICAL: never select self as a network target (self-delivery does not produce peer.task.response)
+    candidates = candidates.filter((c) => c.node_id !== selfNodeId);
+
     log('MATCH_CANDIDATES', { task_type, candidates });
+
+    if (!candidates.length) {
+      return { ok: false, error: { code: 'NO_TARGET_PEER', reason: 'only_self_available' } };
+    }
 
     const explicitlySupported = candidates.filter((c) => c.capability_match === true);
     const pool0 = explicitlySupported.length ? explicitlySupported : candidates;
