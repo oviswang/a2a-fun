@@ -172,6 +172,19 @@ async function clearDerivedCaches(ws) {
   await safeUnlink(path.join(d, 'peers.json'));
 }
 
+async function maybeReloadHttpSidecar() {
+  // Best-effort: ask local sidecar to exit so supervisor (systemd) restarts it.
+  // This makes newly upgraded code take effect without requiring sudo.
+  const port = Number(process.env.A2A_SIDECAR_PORT || 17888);
+  const url = `http://127.0.0.1:${port}/admin/reload`;
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 800);
+    await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: ac.signal }).catch(() => null);
+    clearTimeout(t);
+  } catch {}
+}
+
 async function postUpgradeHealthCheck({ ws } = {}) {
   // Minimal, bounded, evidence-based.
   // 1) snapshot works
@@ -418,6 +431,9 @@ export async function checkAndMaybeAutoUpgradeV0_3_2({ workspace_path, node_id, 
     await appendJsonl(historyPath, { ok: true, event: 'UPGRADE_APPLY_OK', ts: nowIso(), node_id: node_id || null, from: prev_version, to: target_version }).catch(() => {});
     log('UPGRADE_APPLY_OK', { node_id: node_id || null, local_version: prev_version, target_version });
     log('NODE_UPGRADE_COMPLETED', { previous_version: prev_version, new_version: target_version, timestamp: nowIso(), node_id: node_id || null });
+
+    // Best-effort: reload local sidecar so new code takes effect without sudo.
+    await maybeReloadHttpSidecar();
 
     // Controlled restart (systemd will respawn daemon)
     process.exit(0);

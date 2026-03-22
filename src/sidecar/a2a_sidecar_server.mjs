@@ -291,6 +291,15 @@ async function main() {
 
   const server = http.createServer(async (req, res) => {
     try {
+      // Admin: ask the sidecar to reload by exiting (systemd Restart=on-failure will bring it back).
+      // This is used to make upgrades take effect without sudo.
+      if (req.method === 'POST' && req.url === '/admin/reload') {
+        sendJson(res, 200, { ok: true, ts: nowIso(), action: 'exit_for_reload' });
+        // Exit on next tick so the response flushes.
+        setTimeout(() => process.exit(1), 50);
+        return;
+      }
+
       // v0.8.9: batch compare (requester-side skill primitive)
       if (req.method === 'POST' && req.url === '/a2a/compare') {
         const body = await readJson(req);
