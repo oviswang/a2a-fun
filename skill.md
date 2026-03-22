@@ -96,7 +96,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=%i
+# Run as the user who owns the node (recommended).
 WorkingDirectory=/path/to/a2a-fun
 Environment=A2A_SIDECAR_PORT=17890
 Environment=A2A_DATA_DIR=/path/to/a2a-fun/data
@@ -121,7 +121,7 @@ Requires=a2a-http-sidecar.service
 
 [Service]
 Type=simple
-User=%i
+# Run as the user who owns the node (recommended).
 WorkingDirectory=/path/to/a2a-fun/rust/a2a-sidecar
 Environment=A2A_SOCK=%h/.openclaw/a2a/sidecar.sock
 Environment=A2A_HTTP_SIDECAR_URL=http://127.0.0.1:17890
