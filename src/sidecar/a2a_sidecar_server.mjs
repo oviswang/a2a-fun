@@ -267,8 +267,20 @@ async function main() {
   const enableAvailabilityRouting = envEnabled('A2A_ENABLE_AVAILABILITY_ROUTING', true);
   const enableAutoDownrank = envEnabled('A2A_ENABLE_AUTO_DOWNRANK', true);
 
+  // v0.9.0: stability controls (additive)
+  const enableInflightCap = envEnabled('A2A_ENABLE_INFLIGHT_CAP', true);
+  const inflightCap = Math.max(1, Number(process.env.A2A_NODE_INFLIGHT_CAP || 1));
+
+  const enableCircuitBreaker = envEnabled('A2A_ENABLE_CIRCUIT_BREAKER', true);
+  const breakerTimeoutThreshold = Math.max(1, Number(process.env.A2A_BREAKER_TIMEOUT_THRESHOLD || 2));
+  const breakerOpenMs = Math.max(5_000, Number(process.env.A2A_BREAKER_OPEN_MS || 60_000));
+
   let lastRegistryUpdateMs = 0;
   const lastHealthStatus = new Map(); // node_id -> last derived health_status
+
+  // v0.9.0: in-process stability state (best-effort, memory-only)
+  const inflightByNode = new Map(); // node_id -> count
+  const breakerByNode = new Map(); // node_id -> { openUntilMs, timeoutStreak }
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -326,6 +338,19 @@ async function main() {
         registry = lr?.registry || { ts: nowIso(), nodes: {} };
       }
 
+      const isBreakerOpen = (nodeId) => {
+        if (!enableCircuitBreaker) return false;
+        const st = breakerByNode.get(nodeId);
+        const until = Number(st?.openUntilMs || 0);
+        return until > Date.now();
+      };
+
+      const canStartInflight = (nodeId) => {
+        if (!enableInflightCap) return true;
+        const n = Number(inflightByNode.get(nodeId) || 0);
+        return n < inflightCap;
+      };
+
       // Build target candidates (max 3) without default target dependency.
       // Rule:
       // - explicit params.target is honored
@@ -343,13 +368,22 @@ async function main() {
         };
       } else if (enableDiscovery && enableAvailabilityRouting) {
         const nodes = registry?.nodes && typeof registry.nodes === 'object' ? registry.nodes : {};
-        const all = Object.entries(nodes).map(([node_id, n]) => ({
+        let all = Object.entries(nodes).map(([node_id, n]) => ({
           agent_id: String(node_id),
           name: String(node_id),
           summary: '',
           skills: Array.isArray(n?.capabilities) ? n.capabilities : [],
           last_seen: n?.last_seen_ts || null,
         }));
+
+        // v0.9.0 availability gate extensions: avoid breaker-open nodes and busy nodes.
+        all = all.filter((c) => {
+          const id = String(c?.agent_id || '').trim();
+          if (!id) return false;
+          if (isBreakerOpen(id)) return false;
+          if (!canStartInflight(id)) return false;
+          return true;
+        });
 
         // Pick up to 3 attempts, constrained to the highest non-empty availability bucket.
         const tried = new Set();
@@ -433,7 +467,34 @@ async function main() {
 
         for (const target of targetCandidates) {
           attempted++;
-          const net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms });
+
+          // v0.9.0: skip breaker-open nodes unless explicitly targeted
+          if (!explicitTarget && isBreakerOpen(target)) {
+            lastFailureReason = 'circuit_breaker_open';
+            continue;
+          }
+
+          // v0.9.0: inflight cap
+          if (!canStartInflight(target)) {
+            lastFailureReason = 'node_busy';
+            continue;
+          }
+
+          // increment inflight
+          if (enableInflightCap) {
+            inflightByNode.set(target, Number(inflightByNode.get(target) || 0) + 1);
+          }
+
+          let net = null;
+          try {
+            net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms });
+          } finally {
+            if (enableInflightCap) {
+              const n = Math.max(0, Number(inflightByNode.get(target) || 0) - 1);
+              if (n === 0) inflightByNode.delete(target);
+              else inflightByNode.set(target, n);
+            }
+          }
 
           const emitHealthTransition = (nodeId) => {
             if (!enableAutoDownrank) return;
@@ -485,6 +546,11 @@ async function main() {
                   }));
                 }
                 continue;
+              }
+
+              // v0.9.0: breaker recovery on success
+              if (enableCircuitBreaker) {
+                breakerByNode.set(target, { openUntilMs: 0, timeoutStreak: 0 });
               }
 
               if (enableAutoDownrank) {
@@ -539,6 +605,23 @@ async function main() {
           }
 
           lastFailureReason = mapNetworkErrorToReason(net.error?.code);
+
+          // v0.9.0: circuit breaker on repeated timeouts
+          if (enableCircuitBreaker) {
+            const isTimeout = String(net.error?.code || '').toUpperCase() === 'TIMEOUT';
+            if (isTimeout) {
+              const prev = breakerByNode.get(target) || { openUntilMs: 0, timeoutStreak: 0 };
+              const nextStreak = Number(prev.timeoutStreak || 0) + 1;
+              let openUntilMs = Number(prev.openUntilMs || 0);
+              if (nextStreak >= breakerTimeoutThreshold) {
+                openUntilMs = Date.now() + breakerOpenMs;
+                try {
+                  console.log(JSON.stringify({ ok: true, event: 'CIRCUIT_BREAKER_OPEN', node_id: target, ts: nowIso(), timeout_streak: nextStreak, open_ms: breakerOpenMs }));
+                } catch {}
+              }
+              breakerByNode.set(target, { openUntilMs, timeoutStreak: nextStreak });
+            }
+          }
           if (enableAutoDownrank) {
             const kind = String(net.error?.code || '').toUpperCase() === 'TIMEOUT' ? 'timeout' : 'failure';
             recordResponderEvent({ node_id: target, task_type, kind, dataDir });
