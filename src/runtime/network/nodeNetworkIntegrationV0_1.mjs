@@ -1141,45 +1141,67 @@ export async function startNodeNetworkIntegrationV0_1({
                   if (taskType === 'text_complete') {
                     const prompt = String(payload?.payload?.prompt ?? payload?.payload?.text ?? payload?.task ?? '').trim();
                     const policy = String(payload?.payload?.policy_hint || '').trim();
-                    const model = String(process.env.A2A_LLM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
-                    const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
-                    if (!apiKey) {
-                      result = { error: { code: 'UNAVAILABLE_NO_MODEL', reason: 'OPENAI_API_KEY not configured' } };
-                    } else {
-                      const sys = policy ? `Follow this policy hint: ${policy}` : 'Answer concisely and explicitly state uncertainties.';
-                      const body2 = {
-                        model,
-                        messages: [
-                          { role: 'system', content: sys },
-                          { role: 'user', content: prompt || '(empty prompt)' },
-                        ],
-                        temperature: 0.7,
-                        max_tokens: 500,
-                      };
-                      const ac = new AbortController();
-                      const t = setTimeout(() => ac.abort(), 12_000);
-                      try {
-                        const r2 = await fetch('https://api.openai.com/v1/chat/completions', {
-                          method: 'POST',
-                          headers: {
-                            'content-type': 'application/json',
-                            authorization: `Bearer ${apiKey}`,
-                          },
-                          body: JSON.stringify(body2),
-                          signal: ac.signal,
-                        });
-                        const j2 = await r2.json().catch(() => null);
-                        const text = String(j2?.choices?.[0]?.message?.content || '').trim();
-                        if (!text) {
-                          result = { error: { code: 'LLM_EMPTY', reason: 'empty completion' }, model };
+
+                    // Preferred: delegate to local OpenClaw gateway (node-local model configuration).
+                    const gwUrl = String(process.env.A2A_OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789').replace(/\/$/, '');
+                    const loopbackUrl = gwUrl + '/__a2a__/llm/complete';
+
+                    const ac0 = new AbortController();
+                    const t0 = setTimeout(() => ac0.abort(), 20_000);
+                    try {
+                      const r0 = await fetch(loopbackUrl, {
+                        method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify({ prompt: prompt || '(empty prompt)', policy_hint: policy || undefined, timeout_ms: 20000 }),
+                        signal: ac0.signal,
+                      }).catch(() => null);
+
+                      const j0 = r0 ? await r0.json().catch(() => null) : null;
+                      const txt0 = String(j0?.text || '').trim();
+                      if (j0?.ok === true && txt0) {
+                        result = { text: txt0, llm_via: 'openclaw_gateway_loopback', policy_hint_used: policy || null };
+                      } else {
+                        // Fallback (optional): direct OpenAI if configured.
+                        const model = String(process.env.A2A_LLM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+                        const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+                        if (!apiKey) {
+                          result = { error: { code: 'UNAVAILABLE_NO_MODEL', reason: 'openclaw_gateway_unavailable_and_no_OPENAI_API_KEY' } };
                         } else {
-                          result = { text, model, provider: 'openai', policy_hint_used: policy || null };
+                          const sys = policy ? `Follow this policy hint: ${policy}` : 'Answer concisely and explicitly state uncertainties.';
+                          const body2 = {
+                            model,
+                            messages: [
+                              { role: 'system', content: sys },
+                              { role: 'user', content: prompt || '(empty prompt)' },
+                            ],
+                            temperature: 0.7,
+                            max_tokens: 500,
+                          };
+                          const ac = new AbortController();
+                          const t = setTimeout(() => ac.abort(), 12_000);
+                          try {
+                            const r2 = await fetch('https://api.openai.com/v1/chat/completions', {
+                              method: 'POST',
+                              headers: {
+                                'content-type': 'application/json',
+                                authorization: `Bearer ${apiKey}`,
+                              },
+                              body: JSON.stringify(body2),
+                              signal: ac.signal,
+                            });
+                            const j2 = await r2.json().catch(() => null);
+                            const text = String(j2?.choices?.[0]?.message?.content || '').trim();
+                            if (!text) result = { error: { code: 'LLM_EMPTY', reason: 'empty completion' }, model };
+                            else result = { text, model, provider: 'openai', policy_hint_used: policy || null };
+                          } catch (e2) {
+                            result = { error: { code: 'LLM_ERROR', reason: String(e2?.message || e2) }, model };
+                          } finally {
+                            clearTimeout(t);
+                          }
                         }
-                      } catch (e2) {
-                        result = { error: { code: 'LLM_ERROR', reason: String(e2?.message || e2) }, model };
-                      } finally {
-                        clearTimeout(t);
                       }
+                    } finally {
+                      clearTimeout(t0);
                     }
                   }
 
