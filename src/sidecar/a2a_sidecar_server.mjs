@@ -291,6 +291,83 @@ async function main() {
 
   const server = http.createServer(async (req, res) => {
     try {
+      // v0.8.9: batch compare (requester-side skill primitive)
+      if (req.method === 'POST' && req.url === '/a2a/compare') {
+        const body = await readJson(req);
+        const task_type = String(body?.task_type || '').trim();
+        const payload0 = body?.payload && typeof body.payload === 'object' ? body.payload : {};
+        const payload = { ...payload0 };
+        const timeout_ms = Number(body?.timeout_ms || 8000);
+        const mode = String(body?.mode || 'network').trim() || 'network';
+        const cross_critique = Boolean(body?.cross_critique);
+
+        const targets = Array.isArray(body?.targets)
+          ? body.targets.map((x) => String(x).trim()).filter(Boolean).slice(0, 10)
+          : [];
+
+        if (!task_type) return sendJson(res, 400, { ok: false, error: { code: 'MISSING_TASK_TYPE' } });
+        if (!targets.length) return sendJson(res, 400, { ok: false, error: { code: 'MISSING_TARGETS' } });
+
+        // Call our own /a2a/request endpoint sequentially (avoid registry tmp collisions).
+        const runs = [];
+        for (const t of targets) {
+          try {
+            const r = await fetch(`http://${host}:${port}/a2a/request`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ task_type, payload, timeout_ms, mode, target: t }),
+            });
+            const j = await r.json().catch(() => null);
+            runs.push({ target: t, ok: r.ok, http_status: r.status, response: j });
+          } catch (e) {
+            runs.push({ target: t, ok: false, http_status: 0, response: null, error: String(e?.message || e) });
+          }
+        }
+
+        // Minimal aggregation: suggestion histogram + failures.
+        const analysis = {
+          ok: true,
+          task_type,
+          target_count: targets.length,
+          success: runs.filter((x) => x.response?.status === 'success').length,
+          failed: runs.filter((x) => x.response?.status !== 'success').length,
+          suggestions: {},
+          failure_reasons: {},
+        };
+
+        for (const r of runs) {
+          const resp = r.response;
+          const st = resp?.status || 'failed';
+          const reason = String(resp?.trace?.reason || resp?.trace?.reason_code || resp?.trace?.reason || resp?.trace?.summary || 'unknown').slice(0, 120);
+          if (st !== 'success') analysis.failure_reasons[reason] = (analysis.failure_reasons[reason] || 0) + 1;
+          const sug = typeof resp?.result?.suggestion === 'string' ? resp.result.suggestion.trim() : '';
+          if (sug) analysis.suggestions[sug] = (analysis.suggestions[sug] || 0) + 1;
+        }
+
+        // Optional: cross-critique (best-effort)
+        let critiques = null;
+        if (cross_critique) {
+          critiques = [];
+          const raw = runs.map((x) => ({ target: x.target, status: x.response?.status || null, result: x.response?.result || null }));
+          const text = `We ran task_type=${task_type} on multiple peers. Please critique the set of outputs and propose a better combined approach.\n\nOutputs=${JSON.stringify(raw)}`;
+          for (const critic of targets) {
+            try {
+              const r2 = await fetch(`http://${host}:${port}/a2a/request`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ task_type: 'critique_text', payload: { text }, timeout_ms, mode: 'network', target: critic }),
+              });
+              const j2 = await r2.json().catch(() => null);
+              critiques.push({ critic, ok: r2.ok, http_status: r2.status, response: j2 });
+            } catch (e) {
+              critiques.push({ critic, ok: false, http_status: 0, response: null, error: String(e?.message || e) });
+            }
+          }
+        }
+
+        return sendJson(res, 200, { ok: true, ts: nowIso(), runs, analysis, critiques });
+      }
+
       if (req.method !== 'POST' || req.url !== '/a2a/request') {
         return sendJson(res, 404, { ok: false, error: { code: 'NOT_FOUND' } });
       }
