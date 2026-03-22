@@ -10,3 +10,10 @@ data/*.tmp*
 data/node_id
 data/node_fingerprint
 data/daemon.lock
+
+# Evidence packs / local build outputs
+checkpoints/
+rust/a2a-sidecar/target/
+
+# Local runtime version marker
+data/local_version
