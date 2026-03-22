@@ -412,8 +412,9 @@ export function createBootstrapServer({
         return json(res, 200, { ok: true, node_id, last_seen });
       }
 
-      // GET /peers
-      if (req.method === 'GET' && req.url === '/peers') {
+      // GET /peers (canonical)
+      // GET /agents (legacy alias; keep for older clients)
+      if (req.method === 'GET' && (req.url === '/peers' || req.url === '/agents')) {
         const reg = await readRegistry(registryFile);
         const nowMs = Date.now();
         const cutoff = nowMs - ACTIVE_TIMEOUT_MS;
