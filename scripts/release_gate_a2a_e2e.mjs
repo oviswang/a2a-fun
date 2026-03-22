@@ -125,6 +125,7 @@ async function main() {
   let remoteOk = 0;
   let remoteTotal = 0;
   let nonSelfOk = 0;
+  const nonSelfResponders = new Set();
   let ledgerMatch = null; // computed after reward step
 
   const selfNodeId = safeStr(snap?.self?.node_id) || null;
@@ -175,6 +176,7 @@ async function main() {
     if (isRemote && responder && responder !== 'local' && (!selfNodeId || responder !== selfNodeId)) {
       nonSelfOk++;
       perType[task_type].non_self_remote_success++;
+      nonSelfResponders.add(String(responder));
     }
 
     await appendJsonl(runsPath, {
@@ -193,6 +195,8 @@ async function main() {
   evidence.metrics.remote_success = remoteOk;
   evidence.metrics.non_self_remote_success = nonSelfOk;
   evidence.metrics.non_self_remote_rate = remoteTotal ? nonSelfOk / remoteTotal : 0;
+  evidence.metrics.distinct_non_self_responders = Array.from(nonSelfResponders);
+  evidence.metrics.distinct_non_self_responder_count = nonSelfResponders.size;
 
   // STEP 5 — Reward + ledger + explanation (synthetic economic chain using existing semantics)
   // This does NOT change reward semantics; it uses the same value→reward linkage model.
@@ -256,9 +260,18 @@ async function main() {
     if (!ok) perOk = false;
   }
 
+  const diversityNeed = 2;
+  const diversityOk = (evidence.metrics.distinct_non_self_responder_count || 0) >= diversityNeed;
+
   evidence.steps.repeatability = {
-    ok: perOk && (evidence.metrics.non_self_remote_success >= Math.max(1, Math.floor(runs * 0.7))),
+    ok: perOk && diversityOk && (evidence.metrics.non_self_remote_success >= Math.max(1, Math.floor(runs * 0.7))),
     overall_target_non_self_success_min: Math.max(1, Math.floor(runs * 0.7)),
+    responder_diversity: {
+      need: diversityNeed,
+      got: evidence.metrics.distinct_non_self_responder_count || 0,
+      responders: evidence.metrics.distinct_non_self_responders || [],
+      ok: diversityOk,
+    },
     per_task_type: perChecks,
   };
 
