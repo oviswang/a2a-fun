@@ -1,6 +1,6 @@
 # PHASE B — Rust UDS sidecar skeleton
 
-Status: NEXT
+Status: IN_PROGRESS
 
 ## Goal
 Replace the Node UDS proxy with a real Rust daemon named `a2a-sidecar` that:
@@ -13,9 +13,11 @@ Replace the Node UDS proxy with a real Rust daemon named `a2a-sidecar` that:
 
 ## Scope
 - Rust toolchain installation (rustup) under the current user home
-- Create a new Rust crate (location TBD) with UDS HTTP server
-- Implement minimal `/a2a/request` handler:
-  - initially proxy to existing HTTP sidecar OR call existing logic via a child-process adapter
+- Rust crate added:
+  - `rust/a2a-sidecar/` (binary: `a2a-sidecar`)
+- Implement minimal UDS HTTP server:
+  - `GET /healthz`
+  - `POST /a2a/request` (Phase B skeleton proxies to upstream HTTP sidecar via `A2A_HTTP_SIDECAR_URL`)
   - return structured JSON always
 
 ## Non-goals
