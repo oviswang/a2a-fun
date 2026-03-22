@@ -339,6 +339,7 @@ async function main() {
           availability_status: 'unknown',
           availability_bucket: 'explicit',
           availability_reason: 'explicit_target',
+          attempted_targets: [explicitTarget],
         };
       } else if (enableDiscovery && enableAvailabilityRouting) {
         const nodes = registry?.nodes && typeof registry.nodes === 'object' ? registry.nodes : {};
@@ -418,6 +419,11 @@ async function main() {
           if (targetCandidates.length >= 3) break;
         }
         routingMeta = { availability_bucket: 'legacy_default_targets', availability_reason: 'discovery_disabled' };
+      }
+
+      // Attach attempted targets for explainability
+      if (routingMeta && typeof routingMeta === 'object' && !routingMeta.attempted_targets) {
+        routingMeta.attempted_targets = [...targetCandidates];
       }
 
       // 1) Network attempt (up to 3 targets)

@@ -129,19 +129,53 @@ async function main() {
 
   const selfNodeId = safeStr(snap?.self?.node_id) || null;
 
+  const taskTypes = ['echo', 'summarize_text', 'decision_help'];
+  const perType = Object.fromEntries(taskTypes.map((t) => [t, { attempted: 0, remote_attempted: 0, remote_success: 0, non_self_remote_success: 0 }]));
+
+  const isUsable = (task_type, result) => {
+    const r = result && typeof result === 'object' ? result : null;
+    if (!r) return false;
+    if (task_type === 'echo') return typeof r.message === 'string' && r.message.trim().length > 0;
+    if (task_type === 'summarize_text') return typeof r.summary === 'string' && r.summary.trim().length > 0;
+    if (task_type === 'decision_help') return typeof r.suggestion === 'string' && r.suggestion.trim().length > 0;
+    return true;
+  };
+
   for (let i = 0; i < runs; i++) {
-    const text = `gate-${Date.now()}-${i}-${crypto.randomBytes(2).toString('hex')}`;
-    const body = { task_type: 'echo', payload: { text }, timeout_ms: 2500, mode: 'network' };
+    const task_type = taskTypes[i % taskTypes.length];
+    const token = `gate-${Date.now()}-${i}-${crypto.randomBytes(2).toString('hex')}`;
+
+    const payload = (() => {
+      if (task_type === 'echo') return { text: token };
+      if (task_type === 'summarize_text') return { text: `Please summarize: ${token} This is a release-gate test string.` };
+      if (task_type === 'decision_help') return { question: `Release gate decision test: ${token}. Choose safest option.` };
+      return { text: token };
+    })();
+
+    const body = { task_type, payload, timeout_ms: 2500, mode: 'network' };
+    perType[task_type].attempted++;
+
     const r = await postJson(sidecarUrl, body, 4000);
     const j = r.json;
 
     const path0 = j?.trace?.path || null;
     const responder = j?.trace?.responder || null;
 
-    const isRemote = path0 === 'network' && j?.status === 'success';
-    if (path0 === 'network') remoteTotal++;
-    if (isRemote) remoteOk++;
-    if (isRemote && responder && responder !== 'local' && (!selfNodeId || responder !== selfNodeId)) nonSelfOk++;
+    const isRemote = path0 === 'network' && j?.status === 'success' && isUsable(task_type, j?.result);
+
+    if (path0 === 'network') {
+      remoteTotal++;
+      perType[task_type].remote_attempted++;
+    }
+    if (isRemote) {
+      remoteOk++;
+      perType[task_type].remote_success++;
+    }
+
+    if (isRemote && responder && responder !== 'local' && (!selfNodeId || responder !== selfNodeId)) {
+      nonSelfOk++;
+      perType[task_type].non_self_remote_success++;
+    }
 
     await appendJsonl(runsPath, {
       ok: !!r.ok,
@@ -152,6 +186,8 @@ async function main() {
       derived: { isRemote, responder, selfNodeId },
     });
   }
+
+  evidence.metrics.per_task_type = perType;
 
   evidence.metrics.remote_attempted = remoteTotal;
   evidence.metrics.remote_success = remoteOk;
@@ -207,10 +243,23 @@ async function main() {
     economic_trace_summary: econSummary,
   };
 
-  // STEP 6 — Repeatability check: require remote success rate + non-self success
+  // STEP 6 — Repeatability check: require non-self remote success overall + per task_type.
+  const per = evidence.metrics.per_task_type || {};
+  const perChecks = {};
+  let perOk = true;
+  for (const [tt, st] of Object.entries(per)) {
+    const attempted = Number(st?.attempted || 0);
+    const need = Math.max(1, Math.floor(attempted * 0.7));
+    const got = Number(st?.non_self_remote_success || 0);
+    const ok = got >= need;
+    perChecks[tt] = { attempted, need, got, ok };
+    if (!ok) perOk = false;
+  }
+
   evidence.steps.repeatability = {
-    ok: evidence.metrics.non_self_remote_success >= Math.max(1, Math.floor(runs * 0.7)),
-    target_non_self_success_min: Math.max(1, Math.floor(runs * 0.7)),
+    ok: perOk && (evidence.metrics.non_self_remote_success >= Math.max(1, Math.floor(runs * 0.7))),
+    overall_target_non_self_success_min: Math.max(1, Math.floor(runs * 0.7)),
+    per_task_type: perChecks,
   };
 
   evidence.finished_at = nowIso();
