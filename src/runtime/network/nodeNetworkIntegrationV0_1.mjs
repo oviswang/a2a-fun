@@ -1048,7 +1048,7 @@ export async function startNodeNetworkIntegrationV0_1({
                 // Minimal echo fallback for generic task strings (v0.7.0 first responder).
                 if (!taskType && typeof payload?.task === 'string' && String(payload.task).trim()) taskType = 'echo';
 
-                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
+                const supported = new Set(['echo', 'summarize_text', 'decision_help', 'decision_help_v2', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary']);
 
                 if (fromId && fromId !== node_id && requestId && supported.has(taskType)) {
                   log('TASK_RECEIVED', { node_id, from: fromId, request_id: requestId, task_type: taskType, ts_in: payload?.ts || null });
@@ -1088,6 +1088,53 @@ export async function startNodeNetworkIntegrationV0_1({
                       recommendation,
                       suggestion: recommendation,
                       reasoning: options.length ? 'Defaulting to first option (minimal decision helper; no external context).' : 'No options provided.'
+                    };
+                  }
+
+                  if (taskType === 'decision_help_v2') {
+                    const question = String(payload?.payload?.question ?? payload?.task ?? '').trim();
+                    const horizon = String(payload?.payload?.time_horizon || '3m').trim();
+                    const currency = String(payload?.payload?.currency || 'USD').trim() || 'USD';
+                    // Minimal, data-free forecast scaffold. Deterministic + bounded.
+                    const scenarios = [
+                      {
+                        name: 'bull',
+                        probability: 0.34,
+                        price_range: null,
+                        key_drivers: ['Risk-on liquidity conditions', 'ETF/institutional inflows', 'Momentum + technical breakout'],
+                        invalidators: ['Liquidity tightening', 'Major risk-off event', 'Regulatory shock']
+                      },
+                      {
+                        name: 'base',
+                        probability: 0.36,
+                        price_range: null,
+                        key_drivers: ['Mean reversion around key levels', 'Mixed macro signals', 'Range-bound positioning'],
+                        invalidators: ['Volatility regime shift', 'Major exchange/credit event']
+                      },
+                      {
+                        name: 'bear',
+                        probability: 0.30,
+                        price_range: null,
+                        key_drivers: ['Liquidity tightening / USD strength', 'Deleveraging cascade', 'Breakdown below key supports'],
+                        invalidators: ['Policy pivot', 'Strong spot demand absorption']
+                      }
+                    ];
+
+                    result = {
+                      question: question || null,
+                      time_horizon: horizon,
+                      currency,
+                      summary: question ? `Forecast scaffold for ${horizon} (no live market data).` : 'No question provided.',
+                      scenarios,
+                      confidence: 'low',
+                      assumptions: [
+                        'No live price/volatility/on-chain data was used (offline heuristic scaffold).',
+                        'Probabilities are illustrative and normalized to ~1.0.'
+                      ],
+                      next_actions: [
+                        'Specify current BTC price and key levels to produce a concrete range.',
+                        'Add a macro regime assumption (risk-on vs risk-off) to shift scenario weights.'
+                      ]
                     };
                   }
 
@@ -1142,7 +1189,7 @@ export async function startNodeNetworkIntegrationV0_1({
                   if (taskType === 'capability_summary') {
                     result = {
                       node_id,
-                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
+                      supported_task_types: ['echo', 'summarize_text', 'decision_help', 'decision_help_v2', 'critique_text', 'code_exec_safe', 'runtime_status', 'network_snapshot', 'trust_summary', 'presence_status', 'capability_summary'],
                       protocol_version: 'v0.1',
                       trust_status
                     };

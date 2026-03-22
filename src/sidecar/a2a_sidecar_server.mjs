@@ -142,6 +142,11 @@ function isUsableResult(task_type, payload, result) {
 
   if (task_type === 'summarize_text') return typeof r.summary === 'string' && r.summary.trim().length > 0;
   if (task_type === 'decision_help') return typeof r.suggestion === 'string' && r.suggestion.trim().length > 0;
+  if (task_type === 'decision_help_v2') {
+    if (!Array.isArray(r.scenarios) || r.scenarios.length < 3) return false;
+    const hasProb = r.scenarios.every((s) => typeof s?.probability === 'number');
+    return hasProb;
+  }
   return true;
 }
 
@@ -344,13 +349,43 @@ async function main() {
           failure_reasons: {},
         };
 
+        // decision_help: suggestion histogram
+        // decision_help_v2: scenario probability aggregation
+        analysis.scenario_probability_mean = null;
+
+        const scenarioSums = {}; // name -> sum
+        const scenarioCounts = {}; // name -> count
+
         for (const r of runs) {
           const resp = r.response;
           const st = resp?.status || 'failed';
           const reason = String(resp?.trace?.reason || resp?.trace?.reason_code || resp?.trace?.reason || resp?.trace?.summary || 'unknown').slice(0, 120);
           if (st !== 'success') analysis.failure_reasons[reason] = (analysis.failure_reasons[reason] || 0) + 1;
+
           const sug = typeof resp?.result?.suggestion === 'string' ? resp.result.suggestion.trim() : '';
           if (sug) analysis.suggestions[sug] = (analysis.suggestions[sug] || 0) + 1;
+
+          if (task_type === 'decision_help_v2' && st === 'success') {
+            const sc = resp?.result?.scenarios;
+            if (Array.isArray(sc)) {
+              for (const s of sc) {
+                const name = String(s?.name || '').trim();
+                const p2 = s?.probability;
+                if (!name || typeof p2 !== 'number') continue;
+                scenarioSums[name] = (scenarioSums[name] || 0) + p2;
+                scenarioCounts[name] = (scenarioCounts[name] || 0) + 1;
+              }
+            }
+          }
+        }
+
+        if (task_type === 'decision_help_v2') {
+          const mean = {};
+          for (const name of Object.keys(scenarioSums)) {
+            const c = scenarioCounts[name] || 0;
+            if (c > 0) mean[name] = scenarioSums[name] / c;
+          }
+          analysis.scenario_probability_mean = mean;
         }
 
         // Optional: cross-critique (best-effort)
