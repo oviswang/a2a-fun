@@ -28,8 +28,13 @@ Replace the Node UDS proxy with a real Rust daemon named `a2a-sidecar` that:
 - Stop Rust daemon and point plugin back to HTTP sidecar.
 
 ## Evidence required to mark DONE
-- `curl --unix-socket ~/.openclaw/a2a/sidecar.sock http://localhost/healthz` returns ok
-- OpenClaw `a2a_request` succeeds via UDS path
+- Build:
+  - `cd rust/a2a-sidecar && cargo build --release`
+- Healthz:
+  - `curl --unix-socket ~/.openclaw/a2a/sidecar.sock http://localhost/healthz` returns ok
+- Request path:
+  - `curl --unix-socket ~/.openclaw/a2a/sidecar.sock -H 'content-type: application/json' -d '{"task_type":"echo","payload":{"text":"hi"},"timeout_ms":2000,"mode":"auto"}' http://localhost/a2a/request`
+- OpenClaw `a2a_request` succeeds via UDS path (plugin config.sidecarSocketPath)
 - Release gate can run end-to-end using UDS transport
 
 ## Notes

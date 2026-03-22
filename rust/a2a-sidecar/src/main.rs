@@ -43,14 +43,15 @@ async fn handle(req: Request<Body>, upstream: String, sock: String) -> Result<Re
 
             // Proxy to upstream HTTP sidecar for Phase B skeleton.
             let client = hyper::Client::new();
-            let uri = format!("{}/a2a/request", upstream.trim_end_matches('/')).parse();
-            if uri.is_err() {
-                return json_response(StatusCode::OK, json!({
-                    "ok": false,
-                    "error": {"code": "UPSTREAM_URL_INVALID"}
-                })).await;
-            }
-            let uri = uri.unwrap();
+            let uri: hyper::Uri = match format!("{}/a2a/request", upstream.trim_end_matches('/')).parse() {
+                Ok(u) => u,
+                Err(_) => {
+                    return json_response(StatusCode::OK, json!({
+                        "ok": false,
+                        "error": {"code": "UPSTREAM_URL_INVALID"}
+                    })).await;
+                }
+            };
 
             let proxy_req = Request::builder()
                 .method(Method::POST)
@@ -105,9 +106,12 @@ async fn main() {
     // cleanup existing
     let _ = fs::remove_file(&sock);
 
+    let upstream_for_service = upstream.clone();
+    let sock_for_service = sock.clone();
+
     let make = make_service_fn(move |_| {
-        let upstream = upstream.clone();
-        let sock2 = sock.clone();
+        let upstream = upstream_for_service.clone();
+        let sock2 = sock_for_service.clone();
         async move {
             Ok::<_, Infallible>(service_fn(move |req| {
                 handle(req, upstream.clone(), sock2.clone())
