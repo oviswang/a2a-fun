@@ -51,7 +51,7 @@ You should see logs equivalent to:
 ```bash
 set -euo pipefail
 
-A2A_VERSION=v0.8.6
+A2A_VERSION=v0.8.6-p1
 
 if [ ! -d a2a-fun ]; then
   git clone https://github.com/oviswang/a2a-fun.git
