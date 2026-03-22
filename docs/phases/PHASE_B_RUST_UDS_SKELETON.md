@@ -37,6 +37,12 @@ Replace the Node UDS proxy with a real Rust daemon named `a2a-sidecar` that:
 - OpenClaw `a2a_request` succeeds via UDS path (plugin config.sidecarSocketPath)
 - Release gate can run end-to-end using UDS transport
 
+## Artifacts
+- `checkpoints/phases/PHASE_B/20260322-134340/`
+  - `README.md`
+  - `summary.json`
+  - `evidence/*`
+
 ## Notes
 - Rust install on this host requires an exec approval path (cannot be approved via WhatsApp).
 
