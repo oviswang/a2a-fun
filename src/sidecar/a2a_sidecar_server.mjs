@@ -523,8 +523,9 @@ async function main() {
 
           if (net.ok) {
             const remoteStatus = String(net.payload?.status || 'success');
+            const remoteOk = remoteStatus === 'success' || remoteStatus === 'ok';
 
-            if (remoteStatus === 'success') {
+            if (remoteOk) {
               let remoteResult = net.payload?.result ?? null;
 
               // Compatibility: some responders return decision_help as { recommendation, reasoning }
