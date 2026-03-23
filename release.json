@@ -1,10 +1,10 @@
 {
   "channel": "stable",
   "release_type": "stable",
-  "version": "v0.8.15",
-  "git_tag": "v0.8.15",
-  "git_commit_hash": "10e512685a6e100cdc5e280134707adb4b1373e5",
-  "skill_md_hash": "sha256:2d24eec311417fe1f3ff4ec5fda3075decf152709b5835045538f19e9460e6ed",
+  "version": "v0.8.16",
+  "git_tag": "v0.8.16",
+  "git_commit_hash": "1042589410e6fd2523f3fe659849740a7680656a",
+  "skill_md_hash": "sha256:be77b4f2e8d00eed8c53d53189070d0ae573ee4fc1093d8bc658e823ffd07985",
   "build_ts": "2026-03-21T12:54:47.000Z",
-  "signature": "qT2z/yeVckenR2q0AFX8V4WuDc+//dYFHuH1Tz14iJdw0s2OjRAd9hAE1XL2B9F74J5hcTvKLJJjK7Ik4LedCg=="
+  "signature": "I2uFthCFwJA10hg2FJ3+KpqvW1qZhyUg1qLTd903UEkEmA0oO9f4ggD16MfTxbQSG5WKxnrZsIwN259RsSoMDA=="
 }
