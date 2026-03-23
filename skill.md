@@ -89,6 +89,17 @@ echo "Restart OpenClaw gateway to load the plugin:"
 echo "  sudo systemctl restart openclaw-gateway.service 2>/dev/null || systemctl --user restart openclaw-gateway.service 2>/dev/null || true"
 ```
 
+## STEP 1.6 — run install/repair (idempotent)
+This step makes installs/upgrades **self-healing** (fixes common issues like: wrong repo path, services not running, daemon not connected).
+
+```bash
+set -euo pipefail
+cd a2a-fun
+
+# Requires sudo (writes systemd units + restarts services)
+sudo node scripts/install_or_repair_node.mjs --apply
+```
+
 ## STEP 2 — build Rust sidecar
 ```bash
 set -euo pipefail
