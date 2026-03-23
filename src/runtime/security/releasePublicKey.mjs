@@ -5,6 +5,6 @@
 // NOTE: Rotated to match the currently used release signing private key.
 // This is a trust-root change: nodes with the old embedded public key will reject new release.json signatures.
 export const RELEASE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAxCoqi5TavuZKN6DWC2Z+mADYxdb22lq6aTItKdaKa/o=
+MCowBQYDK2VwAyEAzjNBz52rFOyGEVDP/YAKodmKI3h0Y4sjeBBqiFGZVmU=
 -----END PUBLIC KEY-----
 `;
