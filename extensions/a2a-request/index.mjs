@@ -325,6 +325,8 @@ export default {
     // POST 127.0.0.1:18789/__a2a__/llm/complete { prompt, policy_hint?, timeout_ms? }
     api.registerHttpRoute({
       path: '/__a2a__/llm/complete',
+      auth: 'plugin',
+      match: 'exact',
       handler: async (req, res) => {
         try {
           if (!isLoopback(req?.socket?.remoteAddress)) {
@@ -361,6 +363,8 @@ export default {
 
           const sessionKey = `a2a-llm:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
           const run = await rt.subagent.run({
+            // Required by newer OpenClaw subagent runtime contract
+            idempotencyKey: `a2a-llm:${sessionKey}`,
             sessionKey,
             message: prompt,
             extraSystemPrompt: policy_hint || undefined,
@@ -386,7 +390,15 @@ export default {
             const m = msgs[i];
             const role = String(m?.role || m?.author || m?.type || '').toLowerCase();
             const c = m?.content ?? m?.text ?? m?.message ?? null;
-            const s = typeof c === 'string' ? c : (Array.isArray(c) ? c.map((x) => (typeof x === 'string' ? x : '')).join('') : '');
+            const s = typeof c === 'string'
+              ? c
+              : (Array.isArray(c)
+                ? c.map((x) => {
+                    if (typeof x === 'string') return x;
+                    if (x && typeof x === 'object' && typeof x.text === 'string') return x.text;
+                    return '';
+                  }).join('')
+                : '');
             if (s && (role.includes('assistant') || role.includes('ai') || role === '')) { text = String(s).trim(); break; }
           }
 
