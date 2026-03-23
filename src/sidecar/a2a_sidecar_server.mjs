@@ -455,6 +455,12 @@ async function main() {
 
       const explicitTarget = String(body?.target || '').trim() || null;
 
+      // Auto mode: keep default UX snappy by capping per-attempt network timeout when target is not explicit.
+      // This avoids multi-target retries turning into long waits (e.g. 3 * 5s = 15s) for simple local tasks.
+      const network_timeout_ms = (mode === 'auto' && !explicitTarget)
+        ? Math.max(200, Math.min(timeout_ms, 1200))
+        : timeout_ms;
+
       // v0.8.4: automatic responder discovery + derived registry (rollbackable)
       // Source of truth remains existing caches under dataDir (presence-cache / capabilities-cache / success & health stores).
       if (enableDiscovery) {
@@ -620,7 +626,7 @@ async function main() {
 
           let net = null;
           try {
-            net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms, from_node_id: selfNodeId });
+            net = await networkExecute({ relayUrl, target, task_type, payload, timeout_ms: network_timeout_ms, from_node_id: selfNodeId });
           } finally {
             if (enableInflightCap) {
               const n = Math.max(0, Number(inflightByNode.get(target) || 0) - 1);
